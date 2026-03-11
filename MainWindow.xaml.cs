@@ -5,7 +5,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace ImageViewer
 {
@@ -22,6 +24,11 @@ namespace ImageViewer
 
         // 缩略图异步加载
         private CancellationTokenSource? _thumbCts;
+
+        // 缩略图显示模式
+        private bool _thumbAlwaysOn = false;  // 常驻显示
+        private bool _smartThumb = false;      // 智能展示（悬停渐显）
+        private DispatcherTimer? _thumbHideTimer;
 
         private static readonly string[] SupportedExts =
             { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp" };
@@ -195,8 +202,12 @@ namespace ImageViewer
 
                 UpdateTitleInfo(filePath, bitmap);
                 UpdateNavButtons();
-                ThumbStrip.Visibility = Visibility.Visible;
                 UpdateThumbSelection(index);
+
+                if (_thumbAlwaysOn)
+                    ShowThumbImmediate();
+                else if (_smartThumb && ThumbStrip.Visibility == Visibility.Collapsed)
+                    PrepareSmartThumb(); // 智能模式：保持 Visible+Opacity=0，热区可触发（已显示时不重置）
 
                 EmptyState.Visibility = Visibility.Collapsed;
             }
@@ -276,21 +287,16 @@ namespace ImageViewer
         private void UpdateZoomDisplay()
         {
             if (MainImage.Source == null) return;
-
             double zoom = ZoomBorder.ZoomX * 100.0;
             TxtZoom.Text = $"{zoom:0}%";
         }
 
         // ─── 缩放文本框 ───────────────────────────────────────────────
-        private void TxtZoom_GotFocus(object sender, RoutedEventArgs e)
-        {
+        private void TxtZoom_GotFocus(object sender, RoutedEventArgs e) =>
             TxtZoom.SelectAll();
-        }
 
-        private void TxtZoom_LostFocus(object sender, RoutedEventArgs e)
-        {
+        private void TxtZoom_LostFocus(object sender, RoutedEventArgs e) =>
             UpdateZoomDisplay();
-        }
 
         private void TxtZoom_KeyDown(object sender, KeyEventArgs e)
         {
@@ -311,13 +317,8 @@ namespace ImageViewer
             string raw = TxtZoom.Text.Replace("%", "").Trim();
             if (double.TryParse(raw, out double pct) && pct > 0)
             {
-                double zoom = pct / 100.0;
-                zoom = Math.Clamp(zoom, 0.05, 32.0);
-
-                // 以控件中心为缩放基点
-                double cx = ZoomBorder.ActualWidth / 2;
-                double cy = ZoomBorder.ActualHeight / 2;
-                ZoomBorder.ZoomTo(zoom, cx, cy);
+                double zoom = Math.Clamp(pct / 100.0, 0.05, 32.0);
+                ZoomBorder.ZoomTo(zoom, ZoomBorder.ActualWidth / 2, ZoomBorder.ActualHeight / 2);
             }
             else
             {
@@ -362,7 +363,11 @@ namespace ImageViewer
         {
             _thumbCts?.Cancel();
             ThumbPanel.Children.Clear();
+            StopHideTimer();
             ThumbStrip.Visibility = Visibility.Collapsed;
+            BottomPanel.BeginAnimation(OpacityProperty, null);
+            BottomPanel.Opacity = 1;
+            BottomPanel.Visibility = Visibility.Visible;
             MainImage.Source = null;
             _currentIndex = -1;
             TxtFileName.Text = "";
@@ -376,28 +381,179 @@ namespace ImageViewer
             EmptyState.Visibility = Visibility.Visible;
         }
 
-        // ─── 更多按钮（触发 ContextMenu） ────────────────────────────
+        // ─── 更多按钮 ─────────────────────────────────────────────────
         private void BtnMore_Click(object sender, RoutedEventArgs e)
         {
-            if (BtnMore.ContextMenu != null)
+            if (!MorePopup.IsOpen)
             {
-                BtnMore.ContextMenu.PlacementTarget = BtnMore;
-                BtnMore.ContextMenu.IsOpen = true;
+                UpdateToggleIndicators();
+                MorePopup.IsOpen = true;
+            }
+            else
+            {
+                MorePopup.IsOpen = false;
             }
         }
 
-        // ─── 更多菜单项 ───────────────────────────────────────────────
+        // ─── 弹出菜单项 ───────────────────────────────────────────────
         private void MenuShowInExplorer_Click(object sender, RoutedEventArgs e)
         {
+            MorePopup.IsOpen = false;
             if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
-            string path = _imageFiles[_currentIndex];
-            Process.Start("explorer.exe", $"/select,\"{path}\"");
+            Process.Start("explorer.exe", $"/select,\"{_imageFiles[_currentIndex]}\"");
         }
 
         private void MenuCopyPath_Click(object sender, RoutedEventArgs e)
         {
+            MorePopup.IsOpen = false;
             if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
             Clipboard.SetText(_imageFiles[_currentIndex]);
+        }
+
+        private void MenuThumb_Click(object sender, RoutedEventArgs e)
+        {
+            MorePopup.IsOpen = false;
+            _thumbAlwaysOn = !_thumbAlwaysOn;
+            if (_thumbAlwaysOn)
+            {
+                _smartThumb = false;
+                StopHideTimer();
+                if (_currentIndex >= 0) ShowThumbImmediate();
+            }
+            else
+            {
+                HideThumbImmediate();
+            }
+            UpdateToggleIndicators();
+        }
+
+        private void MenuSmart_Click(object sender, RoutedEventArgs e)
+        {
+            MorePopup.IsOpen = false;
+            _smartThumb = !_smartThumb;
+            if (_smartThumb)
+            {
+                _thumbAlwaysOn = false;
+                if (_currentIndex >= 0)
+                    PrepareSmartThumb(); // 有图片时：保持 Visible+Opacity=0
+                else
+                    HideThumbImmediate(); // 无图片时彻底隐藏
+            }
+            else
+            {
+                StopHideTimer();
+                HideThumbImmediate();
+            }
+            UpdateToggleIndicators();
+        }
+
+        // ─── 缩略图热区（智能展示） ───────────────────────────────────
+        private void HotZone_MouseEnter(object sender, MouseEventArgs e)
+        {
+            if (!_smartThumb || _currentIndex < 0) return;
+            StopHideTimer();
+            FadeInThumbStrip();
+        }
+
+        private void HotZone_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (!_smartThumb) return;
+            EnsureHideTimer().Start();
+        }
+
+        private DispatcherTimer EnsureHideTimer()
+        {
+            if (_thumbHideTimer == null)
+            {
+                _thumbHideTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(150)
+                };
+                _thumbHideTimer.Tick += (_, _) =>
+                {
+                    _thumbHideTimer.Stop();
+                    FadeOutThumbStrip();
+                };
+            }
+            _thumbHideTimer.Stop();
+            return _thumbHideTimer;
+        }
+
+        private void StopHideTimer() => _thumbHideTimer?.Stop();
+
+        // ─── 缩略图渐显 / 渐隐动画 ───────────────────────────────────
+        private void FadeInThumbStrip()
+        {
+            if (BottomPanel.Visibility == Visibility.Visible && BottomPanel.Opacity >= 1) return;
+            BottomPanel.Visibility = Visibility.Visible;
+            var anim = new DoubleAnimation(BottomPanel.Opacity, 1.0,
+                new Duration(TimeSpan.FromMilliseconds(180)));
+            BottomPanel.BeginAnimation(OpacityProperty, anim);
+        }
+
+        private void FadeOutThumbStrip()
+        {
+            if (BottomPanel.Visibility == Visibility.Collapsed) return;
+            var anim = new DoubleAnimation(BottomPanel.Opacity, 0.0,
+                new Duration(TimeSpan.FromMilliseconds(200)));
+            // 淡出后保持 Visible，热区仍可触发
+            BottomPanel.BeginAnimation(OpacityProperty, anim);
+        }
+
+        private void ShowThumbImmediate()
+        {
+            ThumbStrip.Visibility = Visibility.Visible;
+            BottomPanel.BeginAnimation(OpacityProperty, null);
+            BottomPanel.Opacity = 1;
+            BottomPanel.Visibility = Visibility.Visible;
+        }
+
+        // 智能模式专用：BottomPanel 透明但占位，热区鼠标事件可触发
+        private void PrepareSmartThumb()
+        {
+            ThumbStrip.Visibility = Visibility.Visible;
+            BottomPanel.BeginAnimation(OpacityProperty, null);
+            BottomPanel.Opacity = 0;
+            BottomPanel.Visibility = Visibility.Visible;
+        }
+
+        private void HideThumbImmediate()
+        {
+            StopHideTimer();
+            BottomPanel.BeginAnimation(OpacityProperty, null);
+            if (_smartThumb)
+            {
+                // 智能模式：BottomPanel 保持 Visible+Opacity=0，热区继续有效
+                BottomPanel.Opacity = 0;
+                BottomPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                ThumbStrip.Visibility = Visibility.Collapsed;
+                BottomPanel.Opacity = 1;
+                BottomPanel.Visibility = Visibility.Visible;
+            }
+        }
+
+        // ─── 更新开关滑块 ─────────────────────────────────────────────
+        private void UpdateToggleIndicators()
+        {
+            AnimateToggle(ThumbPill, ThumbDotSlider, _thumbAlwaysOn);
+            AnimateToggle(SmartPill, SmartDotSlider, _smartThumb);
+        }
+
+        private static void AnimateToggle(Border pill, Border dot, bool isOn)
+        {
+            pill.Background = new SolidColorBrush(isOn
+                ? Color.FromRgb(0x00, 0x78, 0xD4)
+                : Color.FromRgb(0x3A, 0x3A, 0x3A));
+
+            dot.BeginAnimation(Canvas.LeftProperty,
+                new DoubleAnimation(isOn ? 18.0 : 2.0,
+                    new Duration(TimeSpan.FromMilliseconds(160)))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+                });
         }
 
         // ─── Ctrl+拖拽：拖出图片到其他程序 ───────────────────────────
@@ -412,19 +568,16 @@ namespace ImageViewer
             if (e.LeftButton != MouseButtonState.Pressed) return;
             if (MainImage.Source == null) return;
             if (!Keyboard.IsKeyDown(Key.LeftCtrl) && !Keyboard.IsKeyDown(Key.RightCtrl)) return;
-
             if (_isDragging) return;
 
             Point pos = e.GetPosition(ZoomBorder);
             double dx = pos.X - _dragStartPoint.X;
             double dy = pos.Y - _dragStartPoint.Y;
             if (Math.Sqrt(dx * dx + dy * dy) < 8) return;
-
             if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
 
             _isDragging = true;
-            string path = _imageFiles[_currentIndex];
-            var data = new DataObject(DataFormats.FileDrop, new string[] { path });
+            var data = new DataObject(DataFormats.FileDrop, new string[] { _imageFiles[_currentIndex] });
             DragDrop.DoDragDrop(ZoomBorder, data, DragDropEffects.Copy | DragDropEffects.Move);
             _isDragging = false;
         }
@@ -510,34 +663,53 @@ namespace ImageViewer
             };
 
             border.MouseLeftButtonDown += (s, _) => ShowImage((int)((Border)s).Tag);
+            border.MouseEnter += (s, _) =>
+            {
+                var b = (Border)s;
+                if ((int)b.Tag != _currentIndex) b.Background = ThumbHoverBg;
+            };
+            border.MouseLeave += (s, _) =>
+            {
+                var b = (Border)s;
+                if ((int)b.Tag != _currentIndex) b.Background = ThumbNormalBg;
+            };
             return border;
         }
 
         private static readonly SolidColorBrush ThumbActiveBrush =
             (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)).GetAsFrozen();
+        private static readonly SolidColorBrush ThumbNormalBg =
+            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2A)).GetAsFrozen();
+        private static readonly SolidColorBrush ThumbHoverBg =
+            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A)).GetAsFrozen();
 
         private void UpdateThumbSelection(int index)
         {
             for (int i = 0; i < ThumbPanel.Children.Count; i++)
             {
                 if (ThumbPanel.Children[i] is Border b)
+                {
                     b.BorderBrush = (i == index) ? ThumbActiveBrush : Brushes.Transparent;
+                    if (i != index) b.Background = ThumbNormalBg; // 重置悬停背景
+                }
             }
             ScrollThumbIntoView(index);
         }
 
         private void ScrollThumbIntoView(int index)
         {
-            if (index < 0 || ThumbScroll.ActualWidth == 0) return;
-            const double itemWidth = 78; // 74 width + 4 margin
-            double offset = ThumbScroll.HorizontalOffset;
-            double view = ThumbScroll.ActualWidth;
-            double pos = index * itemWidth;
-
-            if (pos < offset)
-                ThumbScroll.ScrollToHorizontalOffset(pos);
-            else if (pos + itemWidth > offset + view)
-                ThumbScroll.ScrollToHorizontalOffset(pos + itemWidth - view);
+            if (index < 0) return;
+            if (ThumbScroll.ActualWidth == 0)
+            {
+                // 只有当栏已 Visible（布局还未完成）时才延迟；Collapsed 时直接跳过避免无限调度
+                if (ThumbStrip.Visibility == Visibility.Visible)
+                    Dispatcher.InvokeAsync(() => ScrollThumbIntoView(index),
+                        System.Windows.Threading.DispatcherPriority.Loaded);
+                return;
+            }
+            const double itemWidth = 78;
+            double center = index * itemWidth + itemWidth / 2.0 - ThumbScroll.ActualWidth / 2.0;
+            ThumbScroll.ScrollToHorizontalOffset(Math.Max(0, center));
         }
 
         // ─── 工具方法 ─────────────────────────────────────────────────

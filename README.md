@@ -23,6 +23,55 @@ JPG / JPEG / PNG / BMP / GIF / TIFF / TIF / WEBP
 ## 版本记录
 
 <details>
+<summary><b>v1.3.5</b> — 缩略图 + 工具栏浮层化</summary>
+
+- 缩略图栏和工具栏改为浮层覆盖在图片区域底部，渐隐后图片占满全高
+- 智能展示模式下工具栏与缩略图同步渐显 / 渐隐
+
+</details>
+
+<details>
+<summary><b>v1.3.4</b> — 缩略图交互优化</summary>
+
+- 修复智能展示模式下点击缩略图导致缩略图栏消失的问题
+- 当前图片缩略图居中显示，左右导航时自动居中跟随
+- 非当前缩略图悬停时背景高亮反馈
+
+</details>
+
+<details>
+<summary><b>v1.3.3</b> — Toggle 开关改为圆点滑块</summary>
+
+- 缩略图栏 / 智能展示开关改为胶囊滑块样式（白色圆点 + 滑动动画）
+
+</details>
+
+<details>
+<summary><b>v1.3.2</b> — 智能展示热区鼠标命中修正</summary>
+
+- 修复智能模式下缩略图区域无法触发渐显的问题（`Collapsed` 不参与命中测试）
+- 智能模式改用 `Opacity=0 + Visibility=Visible`，热区始终可触发
+
+</details>
+
+<details>
+<summary><b>v1.3.1</b> — 智能展示热区范围</summary>
+
+- 热区改为缩略图栏 + 工具栏（图片区域不再触发渐显）
+
+</details>
+
+<details>
+<summary><b>v1.3</b> — 弹出菜单重设计 + 缩略图模式</summary>
+
+- 更多按钮弹出菜单改为自定义 Popup（深色圆角 + DropShadow），统一菜单行样式
+- 菜单新增**缩略图栏**开关（常驻显示）与**智能展示**开关（悬停渐显 / 离开渐隐）
+- 两种模式互斥，开关状态用蓝色 / 灰色圆角指示点显示
+- 智能展示：鼠标进入热区渐显缩略图（180ms），离开后 150ms 延迟再渐隐（200ms）
+
+</details>
+
+<details>
 <summary><b>v1.2.1</b> — 工具栏布局细化</summary>
 
 - 信息按钮（ℹ）移至缩放输入框左侧
