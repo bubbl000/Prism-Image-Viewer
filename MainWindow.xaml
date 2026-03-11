@@ -12,7 +12,8 @@
         AllowDrop="True"
         Drop="Window_Drop"
         DragOver="Window_DragOver"
-        KeyDown="Window_KeyDown">
+        KeyDown="Window_KeyDown"
+        Closing="Window_Closing">
 
     <Window.Resources>
         <!-- 窗口控制按钮 -->
@@ -221,6 +222,9 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BtnSettings" Content="≡" Width="32" Height="25"
+                                Style="{StaticResource WinBtnStyle}" Click="BtnSettings_Click"
+                                FontSize="14" Padding="0,0,0,2"/>
                         <Button x:Name="BtnMinimize" Content="−" Width="32" Height="25"
                                 Style="{StaticResource WinBtnStyle}" Click="BtnMinimize_Click"/>
                         <Button x:Name="BtnMaximize" Content="□" Width="32" Height="25"
@@ -241,7 +245,75 @@
                                 Background="Transparent"
                                 PreviewMouseLeftButtonDown="ZoomBorder_PreviewMouseLeftButtonDown"
                                 PreviewMouseMove="ZoomBorder_PreviewMouseMove"
-                                LayoutUpdated="ZoomBorder_LayoutUpdated">
+                                PreviewMouseLeftButtonUp="ZoomBorder_PreviewMouseLeftButtonUp"
+                                LayoutUpdated="ZoomBorder_LayoutUpdated"
+                                ContextMenuOpening="ZoomBorder_ContextMenuOpening">
+                    <paz:ZoomBorder.ContextMenu>
+                        <ContextMenu Background="#FF2C2C2C" BorderBrush="#FF484848" BorderThickness="1">
+                            <ContextMenu.Effect>
+                                <DropShadowEffect Color="Black" BlurRadius="18"
+                                                  ShadowDepth="3" Opacity="0.55" Direction="270"/>
+                            </ContextMenu.Effect>
+                            <ContextMenu.Template>
+                                <ControlTemplate TargetType="ContextMenu">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="8"
+                                            Padding="8,4">
+                                        <StackPanel IsItemsHost="True"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </ContextMenu.Template>
+                            <ContextMenu.Resources>
+                                <Style TargetType="MenuItem">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Foreground" Value="#CCCCCC"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Height" Value="32"/>
+                                    <Setter Property="FontSize" Value="12"/>
+                                    <Setter Property="Padding" Value="12,0,10,0"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="MenuItem">
+                                                <Border x:Name="Bd"
+                                                        Background="Transparent"
+                                                        CornerRadius="5"
+                                                        Margin="0,1"
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter ContentSource="Header"
+                                                                      HorizontalAlignment="Left"
+                                                                      VerticalAlignment="Center"
+                                                                      TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#22FFFFFF"/>
+                                                        <Setter Property="Foreground" Value="White"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsPressed" Value="True">
+                                                        <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ContextMenu.Resources>
+                            <MenuItem Header="重命名" Click="MenuRename_Click"/>
+                            <MenuItem Header="复制" Click="MenuCopy_Click"/>
+                            <MenuItem Header="另存为..." Click="MenuSaveAs_Click"/>
+                            <MenuItem Header="资源管理器中打开" Click="MenuOpenInExplorer_Click"/>
+                            <MenuItem Header="复制文件路径" Click="MenuCopyPath_Click"/>
+                            <MenuItem Header="设为壁纸" Click="MenuSetWallpaper_Click"/>
+                            <MenuItem Click="MenuDelete_Click" Foreground="#FF6B6B">
+                                <MenuItem.Header>
+                                    <TextBlock Text="删除" Foreground="#FF6B6B"/>
+                                </MenuItem.Header>
+                            </MenuItem>
+                            <MenuItem Header="打印..." Click="MenuPrint_Click"/>
+                        </ContextMenu>
+                    </paz:ZoomBorder.ContextMenu>
                     <Image x:Name="MainImage"
                            Stretch="Uniform"
                            RenderOptions.BitmapScalingMode="HighQuality">
@@ -346,15 +418,10 @@
                                         ToolTip="图片信息" Click="BtnInfo_Click"/>
                                 <Rectangle Style="{StaticResource VDivStyle}"/>
                                 <Border Background="#FF333333" CornerRadius="4"
-                                        Width="60" Height="26" VerticalAlignment="Center">
-                                    <TextBox x:Name="TxtZoom" Text="100%"
-                                             Background="Transparent" Foreground="#BBBBBB"
-                                             BorderThickness="0" TextAlignment="Center"
-                                             VerticalAlignment="Center" FontSize="12"
-                                             CaretBrush="#BBBBBB" SelectionBrush="#4490C208"
-                                             KeyDown="TxtZoom_KeyDown"
-                                             GotFocus="TxtZoom_GotFocus"
-                                             LostFocus="TxtZoom_LostFocus"/>
+                                        Height="26" VerticalAlignment="Center" Padding="8,0">
+                                    <TextBlock x:Name="TxtZoom" Text="100%"
+                                               Foreground="#BBBBBB" FontSize="12"
+                                               VerticalAlignment="Center"/>
                                 </Border>
                                 <TextBlock x:Name="TxtIndex"
                                            Foreground="#555555" FontSize="11"
@@ -423,18 +490,6 @@
                                                               Direction="270"/>
                                         </Border.Effect>
                                         <StackPanel Width="212">
-
-                                            <!-- 在资源管理器中显示 -->
-                                            <Button Content="在资源管理器中显示"
-                                                    Style="{StaticResource PopupRowStyle}"
-                                                    Click="MenuShowInExplorer_Click"/>
-
-                                            <!-- 复制文件路径 -->
-                                            <Button Content="复制文件路径"
-                                                    Style="{StaticResource PopupRowStyle}"
-                                                    Click="MenuCopyPath_Click"/>
-
-                                            <Rectangle Height="1" Fill="#FF383838" Margin="8,4"/>
 
                                             <!-- 缩略图栏 开关 -->
                                             <Button Style="{StaticResource PopupRowStyle}"
