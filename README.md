@@ -23,6 +23,40 @@ JPG / JPEG / PNG / BMP / GIF / TIFF / TIF / WEBP
 ## 版本记录
 
 <details>
+<summary><b>v1.4.1</b> — 文件夹穿透优化 + 弹窗统一 + 间隙修复</summary>
+
+- 文件夹穿透弹窗改为自定义深色 ConfirmDialog，风格统一
+- 无图片文件夹自动跳过（a/b→a/c无图→a/d有图）
+- 修复缩略图栏与工具栏间隙
+
+</details>
+
+<details>
+<summary><b>v1.4.0</b> — 文件夹穿透</summary>
+
+- 更多菜单新增"文件夹穿透"开关
+- 开启后到达第一张/最后一张时提示是否进入相邻兄弟文件夹，无图片文件夹自动跳过
+
+</details>
+
+<details>
+<summary><b>v1.3.9</b> — 鸟瞰图自动渐显/渐隐</summary>
+
+- 鸟瞰图开启时，图片完全适配视口（未超出窗口）自动淡出，超出时淡入
+
+</details>
+
+<details>
+<summary><b>v1.3.6</b> — 工具栏扩展 + 鸟瞰图</summary>
+
+- 修复缩略图栏与工具栏间隙（BottomPanel 行高改为 Auto）
+- 图片序号移至工具栏百分比右侧
+- 新增适应宽度（↔）、原始大小（1∶1）按钮
+- 更多菜单新增鸟瞰图开关：右上角浮层显示全图 + 可见区域蓝框
+
+</details>
+
+<details>
 <summary><b>v1.3.5</b> — 缩略图 + 工具栏浮层化</summary>
 
 - 缩略图栏和工具栏改为浮层覆盖在图片区域底部，渐隐后图片占满全高

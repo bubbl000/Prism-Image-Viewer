@@ -1,9 +1,11 @@
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -29,6 +31,12 @@ namespace ImageViewer
         private bool _thumbAlwaysOn = false;  // 常驻显示
         private bool _smartThumb = false;      // 智能展示（悬停渐显）
         private DispatcherTimer? _thumbHideTimer;
+
+        // 鸟瞰图
+        private bool _showBirdEye = false;
+
+        // 文件夹穿透
+        private bool _folderTraverse = false;
 
         private static readonly string[] SupportedExts =
             { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp" };
@@ -209,6 +217,12 @@ namespace ImageViewer
                 else if (_smartThumb && ThumbStrip.Visibility == Visibility.Collapsed)
                     PrepareSmartThumb(); // 智能模式：保持 Visible+Opacity=0，热区可触发（已显示时不重置）
 
+                if (_showBirdEye)
+                {
+                    BirdEyeImage.Source = bitmap;
+                    BirdEyePanel.Visibility = Visibility.Visible;
+                }
+
                 EmptyState.Visibility = Visibility.Collapsed;
             }
             catch (Exception ex)
@@ -249,6 +263,11 @@ namespace ImageViewer
         private void BtnPrev_Click(object sender, RoutedEventArgs e)
         {
             if (_imageFiles.Count == 0) return;
+            if (_currentIndex == 0 && _folderTraverse)
+            {
+                TryEnterAdjacentFolder(forward: false);
+                return;
+            }
             int idx = (_currentIndex - 1 + _imageFiles.Count) % _imageFiles.Count;
             ShowImage(idx);
         }
@@ -256,6 +275,11 @@ namespace ImageViewer
         private void BtnNext_Click(object sender, RoutedEventArgs e)
         {
             if (_imageFiles.Count == 0) return;
+            if (_currentIndex == _imageFiles.Count - 1 && _folderTraverse)
+            {
+                TryEnterAdjacentFolder(forward: true);
+                return;
+            }
             int idx = (_currentIndex + 1) % _imageFiles.Count;
             ShowImage(idx);
         }
@@ -284,11 +308,27 @@ namespace ImageViewer
             UpdateZoomDisplay();
         }
 
+        // ZoomBorder.Uniform() 将 ZoomX 重置为 1.0（内容填满视口），
+        // 而非设为实际缩放系数。因此 100% 需基于 fitScale 修正：
+        //   zoom% = ZoomX * fitScale * 100
+        //   fitScale = min(vpW/imgW, vpH/imgH)
+        private double GetFitScale(BitmapSource bmp)
+        {
+            bool sideways = (_currentRotation % 180 == 90);
+            double imgW = sideways ? bmp.PixelHeight : bmp.PixelWidth;
+            double imgH = sideways ? bmp.PixelWidth  : bmp.PixelHeight;
+            double vpW = ZoomBorder.ActualWidth;
+            double vpH = ZoomBorder.ActualHeight;
+            if (vpW <= 0 || vpH <= 0 || imgW <= 0 || imgH <= 0) return 1.0;
+            return Math.Min(vpW / imgW, vpH / imgH);
+        }
+
         private void UpdateZoomDisplay()
         {
-            if (MainImage.Source == null) return;
-            double zoom = ZoomBorder.ZoomX * 100.0;
+            if (MainImage.Source is not BitmapSource bmp) return;
+            double zoom = ZoomBorder.ZoomX * GetFitScale(bmp) * 100.0;
             TxtZoom.Text = $"{zoom:0}%";
+            UpdateBirdEye();
         }
 
         // ─── 缩放文本框 ───────────────────────────────────────────────
@@ -315,15 +355,36 @@ namespace ImageViewer
         private void ApplyZoomFromTextBox()
         {
             string raw = TxtZoom.Text.Replace("%", "").Trim();
-            if (double.TryParse(raw, out double pct) && pct > 0)
+            if (double.TryParse(raw, out double pct) && pct > 0 && ZoomBorder.ZoomX > 0
+                && MainImage.Source is BitmapSource bmp)
             {
-                double zoom = Math.Clamp(pct / 100.0, 0.05, 32.0);
-                ZoomBorder.ZoomTo(zoom, ZoomBorder.ActualWidth / 2, ZoomBorder.ActualHeight / 2);
+                double fitScale = GetFitScale(bmp);
+                if (fitScale <= 0) return;
+                // zoom% = ZoomX * fitScale * 100  →  targetZoomX = pct / (100 * fitScale)
+                double targetZoomX = Math.Clamp(pct / (100.0 * fitScale), 0.01, 200.0);
+                double factor = targetZoomX / ZoomBorder.ZoomX;
+                ZoomBorder.ZoomTo(factor, ZoomBorder.ActualWidth / 2, ZoomBorder.ActualHeight / 2);
             }
             else
             {
                 UpdateZoomDisplay();
             }
+        }
+
+        // ─── 适应窗口 / 原始大小 ──────────────────────────────────────
+        private void BtnFitWidth_Click(object sender, RoutedEventArgs e)
+        {
+            ZoomBorder.Uniform(); // 宽/高自动约束适配窗口
+        }
+
+        private void BtnActualSize_Click(object sender, RoutedEventArgs e)
+        {
+            if (MainImage.Source is not BitmapSource bmp || ZoomBorder.ZoomX == 0) return;
+            double fitScale = GetFitScale(bmp);
+            if (fitScale <= 0) return;
+            // 100% = ZoomX * fitScale = 1  →  targetZoomX = 1/fitScale
+            double factor = 1.0 / (fitScale * ZoomBorder.ZoomX);
+            ZoomBorder.ZoomTo(factor, ZoomBorder.ActualWidth / 2, ZoomBorder.ActualHeight / 2);
         }
 
         // ─── 旋转 ─────────────────────────────────────────────────────
@@ -368,6 +429,8 @@ namespace ImageViewer
             BottomPanel.BeginAnimation(OpacityProperty, null);
             BottomPanel.Opacity = 1;
             BottomPanel.Visibility = Visibility.Visible;
+            BirdEyePanel.Visibility = Visibility.Collapsed;
+            BirdEyeImage.Source = null;
             MainImage.Source = null;
             _currentIndex = -1;
             TxtFileName.Text = "";
@@ -423,6 +486,23 @@ namespace ImageViewer
             else
             {
                 HideThumbImmediate();
+            }
+            UpdateToggleIndicators();
+        }
+
+        private void MenuBirdEye_Click(object sender, RoutedEventArgs e)
+        {
+            MorePopup.IsOpen = false;
+            _showBirdEye = !_showBirdEye;
+            if (_showBirdEye && _currentIndex >= 0)
+            {
+                BirdEyeImage.Source = MainImage.Source;
+                BirdEyePanel.Visibility = Visibility.Visible;
+                UpdateBirdEye();
+            }
+            else
+            {
+                BirdEyePanel.Visibility = Visibility.Collapsed;
             }
             UpdateToggleIndicators();
         }
@@ -535,17 +615,69 @@ namespace ImageViewer
             }
         }
 
+        private void MenuFolderTraverse_Click(object sender, RoutedEventArgs e)
+        {
+            MorePopup.IsOpen = false;
+            _folderTraverse = !_folderTraverse;
+            UpdateToggleIndicators();
+        }
+
+        // ─── 文件夹穿透：进入上/下一个兄弟文件夹 ────────────────────────
+        private void TryEnterAdjacentFolder(bool forward)
+        {
+            if (_imageFiles.Count == 0) return;
+            string currentDir = Path.GetDirectoryName(_imageFiles[0]) ?? "";
+            string parentDir  = Path.GetDirectoryName(currentDir) ?? "";
+            if (string.IsNullOrEmpty(parentDir)) return;
+
+            // 同级所有文件夹，按名称排序
+            var siblings = Directory.GetDirectories(parentDir)
+                .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            int ci = siblings.FindIndex(d => string.Equals(d, currentDir, StringComparison.OrdinalIgnoreCase));
+            if (ci < 0) return;
+
+            string msg = forward ? "已是最后一张，是否进入下一个文件夹？" : "已是第一张，是否进入上一个文件夹？";
+            var dlg = new ConfirmDialog("文件夹穿透", msg) { Owner = this };
+            dlg.ShowDialog();
+            if (!dlg.Confirmed) return;
+
+            // 向前或向后依次查找有图片的文件夹（自动跳过无图片的）
+            int step = forward ? 1 : -1;
+            for (int i = ci + step; i >= 0 && i < siblings.Count; i += step)
+            {
+                var files = Directory.GetFiles(siblings[i])
+                    .Where(f => SupportedExts.Contains(
+                        Path.GetExtension(f).ToLowerInvariant()))
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (files.Count == 0) continue;
+
+                _imageFiles = files;
+                ReloadThumbnails();
+                ShowImage(forward ? 0 : files.Count - 1);
+                return;
+            }
+
+            var info = new ConfirmDialog("文件夹穿透",
+                forward ? "后面没有包含图片的文件夹了。" : "前面没有包含图片的文件夹了。",
+                okOnly: true) { Owner = this };
+            info.ShowDialog();
+        }
+
         // ─── 更新开关滑块 ─────────────────────────────────────────────
         private void UpdateToggleIndicators()
         {
             AnimateToggle(ThumbPill, ThumbDotSlider, _thumbAlwaysOn);
             AnimateToggle(SmartPill, SmartDotSlider, _smartThumb);
+            AnimateToggle(BirdEyePill, BirdEyeDotSlider, _showBirdEye);
+            AnimateToggle(FolderTraversePill, FolderTraverseDotSlider, _folderTraverse);
         }
 
         private static void AnimateToggle(Border pill, Border dot, bool isOn)
         {
             pill.Background = new SolidColorBrush(isOn
-                ? Color.FromRgb(0x00, 0x78, 0xD4)
+                ? Color.FromRgb(0x90, 0xC2, 0x08)
                 : Color.FromRgb(0x3A, 0x3A, 0x3A));
 
             dot.BeginAnimation(Canvas.LeftProperty,
@@ -677,7 +809,7 @@ namespace ImageViewer
         }
 
         private static readonly SolidColorBrush ThumbActiveBrush =
-            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)).GetAsFrozen();
+            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x90, 0xC2, 0x08)).GetAsFrozen();
         private static readonly SolidColorBrush ThumbNormalBg =
             (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2A)).GetAsFrozen();
         private static readonly SolidColorBrush ThumbHoverBg =
@@ -710,6 +842,95 @@ namespace ImageViewer
             const double itemWidth = 78;
             double center = index * itemWidth + itemWidth / 2.0 - ThumbScroll.ActualWidth / 2.0;
             ThumbScroll.ScrollToHorizontalOffset(Math.Max(0, center));
+        }
+
+        // ─── 鸟瞰图更新 ───────────────────────────────────────────────
+        private void UpdateBirdEye()
+        {
+            if (BirdEyePanel.Visibility != Visibility.Visible) return;
+            if (MainImage.Source is not BitmapSource bmp) return;
+            if (BirdEyeCanvas.ActualWidth == 0 || BirdEyeCanvas.ActualHeight == 0) return;
+
+            bool sideways = (_currentRotation % 180 == 90);
+            double imgPixW = sideways ? bmp.PixelHeight : bmp.PixelWidth;
+            double imgPixH = sideways ? bmp.PixelWidth  : bmp.PixelHeight;
+
+            // 鸟瞰图画布：图片像素 → 鸟瞰缩略图坐标
+            double panelW  = BirdEyeCanvas.ActualWidth;
+            double panelH  = BirdEyeCanvas.ActualHeight;
+            double beScale = Math.Min(panelW / imgPixW, panelH / imgPixH);
+            double beOffX  = (panelW - imgPixW * beScale) / 2;
+            double beOffY  = (panelH - imgPixH * beScale) / 2;
+
+            // ZoomBorder 状态（内容坐标系 = ZoomBorder WPF 单位）
+            double zx = ZoomBorder.ZoomX;
+            double zy = ZoomBorder.ZoomY;
+            double ox = ZoomBorder.OffsetX;
+            double oy = ZoomBorder.OffsetY;
+            double vw = ZoomBorder.ActualWidth;
+            double vh = ZoomBorder.ActualHeight;
+
+            // Stretch=Uniform 导致图片在内容坐标内有上下或左右留白
+            double imgAspect = imgPixW / imgPixH;
+            double rendW, rendH;
+            if (vw / imgAspect <= vh)
+            { rendW = vw; rendH = vw / imgAspect; }
+            else
+            { rendH = vh; rendW = vh * imgAspect; }
+            double rendX = (vw - rendW) / 2;
+            double rendY = (vh - rendH) / 2;
+
+            // 可见内容区域（ZoomBorder 内容坐标）
+            double visL = Math.Max(0, -ox / zx);
+            double visT = Math.Max(0, -oy / zy);
+            double visR = Math.Min(vw, (vw - ox) / zx);
+            double visB = Math.Min(vh, (vh - oy) / zy);
+
+            // 裁剪到图片渲染区域，并转换为图片像素坐标
+            double pixL = Math.Max(0,      (Math.Max(visL, rendX)        - rendX) / rendW * imgPixW);
+            double pixT = Math.Max(0,      (Math.Max(visT, rendY)        - rendY) / rendH * imgPixH);
+            double pixR = Math.Min(imgPixW, (Math.Min(visR, rendX + rendW) - rendX) / rendW * imgPixW);
+            double pixB = Math.Min(imgPixH, (Math.Min(visB, rendY + rendH) - rendY) / rendH * imgPixH);
+
+            // ZoomX <= 1.0 表示图片适配视口，无需鸟瞰图
+            bool fullyVisible = zx <= 1.0;
+            double targetOpacity = fullyVisible ? 0.0 : 1.0;
+            if (Math.Abs(BirdEyePanel.Opacity - targetOpacity) > 0.01)
+            {
+                var anim = new System.Windows.Media.Animation.DoubleAnimation(
+                    targetOpacity, TimeSpan.FromMilliseconds(200));
+                BirdEyePanel.BeginAnimation(OpacityProperty, anim);
+            }
+
+            // 图片像素坐标 → 鸟瞰图画布坐标
+            Canvas.SetLeft(BirdEyeRect, beOffX + pixL * beScale);
+            Canvas.SetTop(BirdEyeRect,  beOffY + pixT * beScale);
+            BirdEyeRect.Width  = Math.Max(0, (pixR - pixL) * beScale);
+            BirdEyeRect.Height = Math.Max(0, (pixB - pixT) * beScale);
+        }
+
+        // ─── 窗口边缘拖拽缩放 ─────────────────────────────────────────
+        private static readonly Dictionary<string, int> _resizeHitMap = new()
+        {
+            ["Left"] = 10, ["Right"] = 11, ["Top"] = 12,
+            ["TopLeft"] = 13, ["TopRight"] = 14,
+            ["Bottom"] = 15, ["BottomLeft"] = 16, ["BottomRight"] = 17
+        };
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+        private void ResizeEdge_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (WindowState == WindowState.Maximized) return;
+            if (sender is FrameworkElement el && el.Tag is string tag
+                && _resizeHitMap.TryGetValue(tag, out int ht))
+            {
+                var hwnd = new WindowInteropHelper(this).Handle;
+                ReleaseMouseCapture();
+                SendMessage(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, (IntPtr)ht, IntPtr.Zero);
+                e.Handled = true;
+            }
         }
 
         // ─── 工具方法 ─────────────────────────────────────────────────
