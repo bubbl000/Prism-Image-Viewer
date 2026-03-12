@@ -26,6 +26,29 @@ JPG / JPEG / PNG / BMP / GIF / TIFF / TIF / WEBP
 ## 版本记录
 
 <details>
+<summary><b>v2.2.1</b> — 修复 GIF 播放 + 步进按钮 + 另存为崩溃 + 全屏退出按钮</summary>
+
+- 修复 GIF 自动播放：DispatcherTimer 改为在 UI 线程构造，帧数据在后台加载
+- GIF ◀/▶ 改为逐帧步进（前一帧/后一帧），不再跳到首/末帧
+- 修复另存为：ShowDialog 返回 null 导致逻辑不走，改为直接检查 Confirmed
+- 全屏右上角增加"✕ 退出全屏"按钮；全屏背景改为半透明 #CC1A1A1A
+- 移除设置窗口"界面设置"区块（功能保留在主窗口更多菜单）
+
+</details>
+
+<details>
+<summary><b>v2.2</b> — 另存为重设计 + 弹窗半透明 + 全屏 + GIF 帧控制 + 异步加载 + 文件关联</summary>
+
+- 另存为对话框重设计：PNG/JPEG 格式选择，JPEG 质量滑条（默认 95），300ms 防抖实时估算文件大小
+- 弹窗半透明底：ConfirmDialog、InfoWindow 背景改为 `#DD2B2B2B`
+- 标题栏新增全屏按钮 ⛶，Esc 退出全屏
+- GIF 帧控制面板：⏮ ⏸ ⏭ + 帧进度滑条 + 当前帧数显示；GifAnimator 读取每帧延迟自动播放
+- 加载提示延迟 400ms 显示，ShowImage 改为异步，加载快时不出现遮罩
+- 设置窗口新增文件关联分区，可选格式复选框 + 全选/取消全选 + 一键写注册表关联
+
+</details>
+
+<details>
 <summary><b>v2.1</b> — 拖拽优化 + 设置窗口 + 元信息浮动窗口</summary>
 
 - 拖拽释放后自动恢复"适应窗口"居中状态

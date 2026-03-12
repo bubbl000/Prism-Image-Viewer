@@ -23,6 +23,13 @@ namespace ImageViewer
         private int _currentIndex = -1;
         private double _currentRotation = 0;
 
+        // 异步加载
+        private CancellationTokenSource? _loadCts;
+
+        // GIF 动画
+        private GifAnimator? _gifAnimator;
+        private bool _suppressSliderEvent = false;
+
         // Ctrl+拖拽外部拖出
         private Point _dragStartPoint;
         private bool _isDragging = false;
@@ -52,6 +59,38 @@ namespace ImageViewer
         public MainWindow()
         {
             InitializeComponent();
+            MouseMove += Window_MouseMove;
+            MouseLeftButtonUp += Window_MouseLeftButtonUp;
+            Loaded += Window_Loaded;
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            var s = AppSettings.Current;
+
+            // 窗口位置
+            if (s.RememberPosition &&
+                s.WindowLeft.HasValue && s.WindowTop.HasValue &&
+                s.WindowWidth.HasValue && s.WindowHeight.HasValue)
+            {
+                Left   = s.WindowLeft.Value;
+                Top    = s.WindowTop.Value;
+                Width  = s.WindowWidth.Value;
+                Height = s.WindowHeight.Value;
+            }
+
+            // 即时生效设置
+            if (s.AlwaysOnTop) Topmost = true;
+            if (s.OriginalPixelMode)
+                RenderOptions.SetBitmapScalingMode(MainImage,
+                    System.Windows.Media.BitmapScalingMode.NearestNeighbor);
+
+            // 同步显示状态
+            _thumbAlwaysOn  = s.ShowThumbnails;
+            _smartThumb     = s.SmartThumbnails;
+            _showBirdEye    = s.ShowBirdEye;
+            _folderTraverse = s.FolderTraverse;
+            UpdateToggleIndicators();
         }
 
         // ─── 标题栏拖动 ───────────────────────────────────────────────
@@ -84,9 +123,63 @@ namespace ImageViewer
         private void BtnClose_Click(object sender, RoutedEventArgs e) =>
             Close();
 
+        // ─── 全屏 ─────────────────────────────────────────────────────
+        private bool _isFullScreen = false;
+        private WindowState _preFullScreenState = WindowState.Normal;
+
+        private void BtnFullscreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+        private void ToggleFullScreen()
+        {
+            if (!_isFullScreen)
+            {
+                _preFullScreenState = WindowState;
+                _isFullScreen = true;
+                TitleBar.Visibility = Visibility.Collapsed;
+                MainBorder.CornerRadius = new CornerRadius(0);
+                FullscreenExitOverlay.Visibility = Visibility.Visible;
+                WindowState = WindowState.Maximized;
+                BtnFullscreen.Content = "⊡";
+                ApplyFullscreenBgSettings();
+            }
+            else
+            {
+                ExitFullScreen();
+            }
+        }
+
+        private void ExitFullScreen()
+        {
+            _isFullScreen = false;
+            TitleBar.Visibility = Visibility.Visible;
+            MainBorder.CornerRadius = new CornerRadius(10);
+            MainBorder.Background = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A));
+            FullscreenExitOverlay.Visibility = Visibility.Collapsed;
+            WindowState = _preFullScreenState == WindowState.Maximized ? WindowState.Normal : _preFullScreenState;
+            BtnFullscreen.Content = "⛶";
+        }
+
+        private void BtnExitFullscreen_Click(object sender, RoutedEventArgs e) => ExitFullScreen();
+
         private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             StopFileWatcher();
+
+            var s = AppSettings.Current;
+            // 同步显示状态回 AppSettings
+            s.ShowThumbnails  = _thumbAlwaysOn;
+            s.SmartThumbnails = _smartThumb;
+            s.ShowBirdEye     = _showBirdEye;
+            s.FolderTraverse  = _folderTraverse;
+
+            if (s.RememberPosition && WindowState == WindowState.Normal)
+            {
+                s.WindowLeft   = Left;
+                s.WindowTop    = Top;
+                s.WindowWidth  = Width;
+                s.WindowHeight = Height;
+            }
+            s.Save();
         }
 
         private void ToggleMaximize()
@@ -354,35 +447,95 @@ namespace ImageViewer
             }
         }
 
-        // ─── 显示指定索引的图片 ───────────────────────────────────────
-        private void ShowImage(int index)
+        // ─── 显示指定索引的图片（异步，支持 GIF 动画） ───────────────
+        private async void ShowImage(int index)
         {
             if (index < 0 || index >= _imageFiles.Count) return;
 
+            _loadCts?.Cancel();
+            var cts = new CancellationTokenSource();
+            _loadCts = cts;
+
             string filePath = _imageFiles[index];
+            _currentIndex = index;
+            _currentRotation = 0;
+            ImageRotation.Angle = 0;
+
+            // 停止并清理上一个 GIF
+            StopGifAnimator();
+            GifPanel.Visibility = Visibility.Collapsed;
+
+            // 400ms 后才显示加载提示
+            var overlayCts = new CancellationTokenSource();
+            _ = ShowOverlayAfterDelay(overlayCts.Token);
+
             try
             {
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.UriSource = new Uri(filePath);
-                bitmap.EndInit();
+                bool isGif = filePath.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
+                BitmapSource? bitmap = null;
+
+                if (isGif)
+                {
+                    // 在后台线程加载帧数据（冻结 BitmapSource）
+                    var frameData = await Task.Run(() =>
+                    {
+                        cts.Token.ThrowIfCancellationRequested();
+                        return GifAnimator.LoadFrames(filePath);
+                    }, cts.Token);
+
+                    if (cts.IsCancellationRequested) return;
+
+                    if (frameData.Count > 1)
+                    {
+                        // DispatcherTimer 必须在 UI 线程创建
+                        var animator = new GifAnimator(frameData);
+                        _gifAnimator = animator;
+                        _gifAnimator.TargetImage = MainImage;
+                        _gifAnimator.OnFrameChanged = OnGifFrameChanged;
+                        bitmap = _gifAnimator.GetFrame(0);
+
+                        _suppressSliderEvent = true;
+                        GifSlider.Maximum = frameData.Count - 1;
+                        GifSlider.Value = 0;
+                        _suppressSliderEvent = false;
+                        TxtGifFrame.Text = $"1 / {frameData.Count}";
+                        BtnGifPlayPause.Content = "⏸";
+                        GifPanel.Visibility = Visibility.Visible;
+                        _gifAnimator.Play();
+                    }
+                    else
+                    {
+                        bitmap = frameData.Count > 0 ? frameData[0].Frame : null;
+                    }
+                }
+                else
+                {
+                    bitmap = await Task.Run(() =>
+                    {
+                        cts.Token.ThrowIfCancellationRequested();
+                        var bmp = new BitmapImage();
+                        bmp.BeginInit();
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.UriSource = new Uri(filePath);
+                        bmp.EndInit();
+                        bmp.Freeze();
+                        return (BitmapSource)bmp;
+                    }, cts.Token);
+                }
+
+                if (cts.IsCancellationRequested) return;
 
                 MainImage.Source = bitmap;
-                _currentIndex = index;
-                _currentRotation = 0;
-                ImageRotation.Angle = 0;
-
                 ZoomBorder.Uniform();
 
-                UpdateTitleInfo(filePath, bitmap);
+                UpdateTitleInfo(filePath, bitmap!);
                 UpdateNavButtons();
                 UpdateThumbSelection(index);
 
                 if (_thumbAlwaysOn)
                     ShowThumbImmediate();
                 else if (_smartThumb && ThumbStrip.Visibility == Visibility.Collapsed)
-                    PrepareSmartThumb(); // 智能模式：保持 Visible+Opacity=0，热区可触发（已显示时不重置）
+                    PrepareSmartThumb();
 
                 if (_showBirdEye)
                 {
@@ -390,20 +543,35 @@ namespace ImageViewer
                     BirdEyePanel.Visibility = Visibility.Visible;
                 }
 
-                // 更新信息窗口
                 UpdateInfoWindow();
-
                 EmptyState.Visibility = Visibility.Collapsed;
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                MessageBox.Show($"无法加载图片：{ex.Message}", "错误",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                if (!cts.IsCancellationRequested)
+                    MessageBox.Show($"无法加载图片：{ex.Message}", "错误",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                overlayCts.Cancel();
+                LoadingOverlay.Visibility = Visibility.Collapsed;
             }
         }
 
+        private async Task ShowOverlayAfterDelay(CancellationToken ct)
+        {
+            try
+            {
+                await Task.Delay(400, ct);
+                LoadingOverlay.Visibility = Visibility.Visible;
+            }
+            catch (TaskCanceledException) { }
+        }
+
         // ─── 更新标题栏信息 ───────────────────────────────────────────
-        private void UpdateTitleInfo(string filePath, BitmapImage bitmap)
+        private void UpdateTitleInfo(string filePath, BitmapSource bitmap)
         {
             var info = new FileInfo(filePath);
             TxtFileName.Text = info.Name;
@@ -457,10 +625,11 @@ namespace ImageViewer
         // ─── 键盘导航 ─────────────────────────────────────────────────
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
-            if (TxtZoom.IsFocused) return;
-
             switch (e.Key)
             {
+                case Key.Escape:
+                    if (_isFullScreen) ExitFullScreen();
+                    break;
                 case Key.Left:
                 case Key.PageUp:
                     BtnPrev_Click(sender, e);
@@ -470,6 +639,26 @@ namespace ImageViewer
                     BtnNext_Click(sender, e);
                     break;
             }
+        }
+
+        // ─── 滚轮模式 ─────────────────────────────────────────────────
+        private void Window_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            string mode = AppSettings.Current.WheelMode;
+            if (mode == "zoom") return; // 让 ZoomBorder 处理
+
+            // 仅当鼠标在图片区域内时拦截
+            Point pos = e.GetPosition(ZoomBorder);
+            if (pos.X < 0 || pos.Y < 0 ||
+                pos.X > ZoomBorder.ActualWidth || pos.Y > ZoomBorder.ActualHeight) return;
+
+            if (mode == "page")
+            {
+                if (e.Delta < 0) BtnNext_Click(sender, e);
+                else             BtnPrev_Click(sender, e);
+                e.Handled = true;
+            }
+            // "scroll" 模式交给 ZoomBorder 默认平移处理
         }
 
         // ─── 缩放显示同步 ─────────────────────────────────────────────
@@ -580,6 +769,10 @@ namespace ImageViewer
         // ─── 清空图片状态 ─────────────────────────────────────────────
         private void ClearImageState()
         {
+            _loadCts?.Cancel();
+            StopGifAnimator();
+            GifPanel.Visibility = Visibility.Collapsed;
+            LoadingOverlay.Visibility = Visibility.Collapsed;
             _thumbCts?.Cancel();
             ThumbPanel.Children.Clear();
             StopHideTimer();
@@ -1058,12 +1251,30 @@ namespace ImageViewer
             if (index < 0) return;
             if (ThumbScroll.ActualWidth == 0)
             {
-                // 只有当栏已 Visible（布局还未完成）时才延迟；Collapsed 时直接跳过避免无限调度
                 if (ThumbStrip.Visibility == Visibility.Visible)
                     Dispatcher.InvokeAsync(() => ScrollThumbIntoView(index),
                         System.Windows.Threading.DispatcherPriority.Loaded);
                 return;
             }
+
+            // 用 TransformToAncestor 精确计算缩略图中心偏移
+            try
+            {
+                if (index < ThumbPanel.Children.Count)
+                {
+                    var item = ThumbPanel.Children[index] as FrameworkElement;
+                    if (item != null && item.ActualWidth > 0)
+                    {
+                        var transform = item.TransformToAncestor(ThumbPanel);
+                        var pos = transform.Transform(new Point(0, 0));
+                        double offset = pos.X + item.ActualWidth / 2.0 - ThumbScroll.ActualWidth / 2.0;
+                        ThumbScroll.ScrollToHorizontalOffset(Math.Max(0, offset));
+                        return;
+                    }
+                }
+            }
+            catch { /* 回退到固定宽度计算 */ }
+
             const double itemWidth = 78;
             double center = index * itemWidth + itemWidth / 2.0 - ThumbScroll.ActualWidth / 2.0;
             ThumbScroll.ScrollToHorizontalOffset(Math.Max(0, center));
@@ -1224,30 +1435,6 @@ namespace ImageViewer
             Clipboard.SetDataObject(data);
         }
 
-        // 另存为
-        private void MenuSaveAs_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
-            var dialog = new SaveFileDialog
-            {
-                Title = "另存为",
-                FileName = Path.GetFileName(_imageFiles[_currentIndex]),
-                Filter = "图片文件|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tiff;*.tif;*.webp|所有文件|*.*"
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                try
-                {
-                    File.Copy(_imageFiles[_currentIndex], dialog.FileName, true);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"保存失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-        }
-
         // 设置壁纸
         private void MenuSetWallpaper_Click(object sender, RoutedEventArgs e)
         {
@@ -1403,6 +1590,155 @@ namespace ImageViewer
             UpdateToggleIndicators();
         }
 
+        // ─── 设置直接生效接口 ─────────────────────────────────────────
+        public void ApplyAlwaysOnTop(bool value)
+        {
+            Topmost = value;
+        }
+
+        public void ApplyPixelMode(bool value)
+        {
+            RenderOptions.SetBitmapScalingMode(MainImage,
+                value ? System.Windows.Media.BitmapScalingMode.NearestNeighbor
+                      : System.Windows.Media.BitmapScalingMode.HighQuality);
+        }
+
+        public void ApplyFullscreenBgSettings()
+        {
+            if (!_isFullScreen) return;
+            var s = AppSettings.Current;
+            byte alpha = (byte)(Math.Clamp(s.FullscreenBgOpacity, 0, 1) * 255);
+            byte rgb   = s.FullscreenBgType == "black" ? (byte)0 : (byte)0x1A;
+            MainBorder.Background = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromArgb(alpha, rgb, rgb, rgb));
+        }
+
+        // ─── GIF 控制 ─────────────────────────────────────────────────
+        private void StopGifAnimator()
+        {
+            _gifAnimator?.Stop();
+            _gifAnimator = null;
+        }
+
+        // ─── GIF 面板拖动功能 ──────────────────────────────────────────
+        private bool _isGifPanelDragging = false;
+        private Point _gifPanelDragStartPoint;
+        private Point _gifPanelStartPosition;
+
+        private void GifPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                _isGifPanelDragging = true;
+                _gifPanelDragStartPoint = e.GetPosition(this);
+                
+                // 记录面板当前的位置
+                if (GifPanel.HorizontalAlignment == HorizontalAlignment.Left && 
+                    GifPanel.VerticalAlignment == VerticalAlignment.Top)
+                {
+                    _gifPanelStartPosition = new Point(GifPanel.Margin.Left, GifPanel.Margin.Top);
+                }
+                else
+                {
+                    // 如果是初始位置，计算相对位置（居中顶部）
+                    double left = (ActualWidth - GifPanel.ActualWidth) / 2; // 水平居中
+                    double top = 60; // 顶部60px
+                    _gifPanelStartPosition = new Point(left, top);
+                }
+                
+                GifPanel.CaptureMouse();
+                e.Handled = true;
+            }
+        }
+
+        private void Window_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_isGifPanelDragging && e.LeftButton == MouseButtonState.Pressed)
+            {
+                Point currentPosition = e.GetPosition(this);
+                
+                // 计算偏移量
+                double deltaX = currentPosition.X - _gifPanelDragStartPoint.X;
+                double deltaY = currentPosition.Y - _gifPanelDragStartPoint.Y;
+
+                // 计算新的位置
+                double newLeft = _gifPanelStartPosition.X + deltaX;
+                double newTop = _gifPanelStartPosition.Y + deltaY;
+
+                // 限制在窗口范围内
+                newLeft = Math.Max(0, Math.Min(newLeft, ActualWidth - GifPanel.ActualWidth));
+                newTop = Math.Max(0, Math.Min(newTop, ActualHeight - GifPanel.ActualHeight));
+
+                // 更新位置
+                GifPanel.HorizontalAlignment = HorizontalAlignment.Left;
+                GifPanel.VerticalAlignment = VerticalAlignment.Top;
+                GifPanel.Margin = new Thickness(newLeft, newTop, 0, 0);
+            }
+            else if (_isGifPanelDragging && e.LeftButton == MouseButtonState.Released)
+            {
+                _isGifPanelDragging = false;
+                GifPanel.ReleaseMouseCapture();
+            }
+        }
+
+        private void Window_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_isGifPanelDragging)
+            {
+                _isGifPanelDragging = false;
+                GifPanel.ReleaseMouseCapture();
+            }
+        }
+
+        private void OnGifFrameChanged(int frameIndex)
+        {
+            _suppressSliderEvent = true;
+            GifSlider.Value = frameIndex;
+            _suppressSliderEvent = false;
+            TxtGifFrame.Text = $"{frameIndex + 1} / {(int)GifSlider.Maximum + 1}";
+        }
+
+        private void BtnGifFirst_Click(object sender, RoutedEventArgs e)
+        {
+            if (_gifAnimator == null) return;
+            _gifAnimator.Pause();
+            int prev = (_gifAnimator.CurrentFrame - 1 + _gifAnimator.TotalFrames) % _gifAnimator.TotalFrames;
+            _gifAnimator.GoToFrame(prev);
+            BtnGifPlayPause.Content = "▶";
+        }
+
+        private void BtnGifPlayPause_Click(object sender, RoutedEventArgs e)
+        {
+            if (_gifAnimator == null) return;
+            if (_gifAnimator.IsPlaying)
+            {
+                _gifAnimator.Pause();
+                BtnGifPlayPause.Content = "▶";
+            }
+            else
+            {
+                _gifAnimator.Play();
+                BtnGifPlayPause.Content = "⏸";
+            }
+        }
+
+        private void BtnGifLast_Click(object sender, RoutedEventArgs e)
+        {
+            if (_gifAnimator == null) return;
+            _gifAnimator.Pause();
+            int next = (_gifAnimator.CurrentFrame + 1) % _gifAnimator.TotalFrames;
+            _gifAnimator.GoToFrame(next);
+            BtnGifPlayPause.Content = "▶";
+        }
+
+        private void GifSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressSliderEvent || _gifAnimator == null) return;
+            _gifAnimator.Pause();
+            _gifAnimator.GoToFrame((int)e.NewValue);
+            BtnGifPlayPause.Content = "▶";
+        }
+
         // ─── 设置窗口 ─────────────────────────────────────────────────
         private SettingsWindow? _settingsWindow;
 
@@ -1410,13 +1746,114 @@ namespace ImageViewer
         {
             if (_settingsWindow == null || !_settingsWindow.IsLoaded)
             {
-                _settingsWindow = new SettingsWindow(this);
-                _settingsWindow.Owner = this;
+                _settingsWindow = new SettingsWindow(this) { Owner = this };
                 _settingsWindow.Show();
             }
             else
             {
                 _settingsWindow.Activate();
+            }
+        }
+
+        // ─── GIF 动画管理器 ───────────────────────────────────────────
+        private class GifAnimator
+        {
+            // 帧数据结构（可在后台线程加载）
+            public record FrameData(BitmapSource Frame, int DelayMs);
+
+            // 静态方法：在后台线程加载所有帧，返回冻结数据
+            public static List<FrameData> LoadFrames(string filePath)
+            {
+                var result = new List<FrameData>();
+                using var stream = new FileStream(filePath, FileMode.Open,
+                    FileAccess.Read, FileShare.Read);
+                var decoder = new GifBitmapDecoder(stream,
+                    BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+
+                foreach (var frame in decoder.Frames)
+                {
+                    int delayMs = 100;
+                    if (frame.Metadata is BitmapMetadata meta)
+                    {
+                        try
+                        {
+                            if (meta.ContainsQuery("/grctlext/Delay"))
+                            {
+                                var raw = meta.GetQuery("/grctlext/Delay");
+                                if (raw != null && ushort.TryParse(raw.ToString(), out ushort cs))
+                                    delayMs = Math.Max(cs * 10, 20);
+                            }
+                        }
+                        catch { }
+                    }
+                    var frozen = frame.Clone();
+                    frozen.Freeze();
+                    result.Add(new FrameData(frozen, delayMs));
+                }
+                return result;
+            }
+
+            private readonly List<FrameData> _frames;
+            // DispatcherTimer 必须在 UI 线程构造，此构造函数必须在 UI 线程调用
+            private readonly DispatcherTimer _timer;
+            private int _currentIndex = 0;
+            private bool _isPlaying = false;
+
+            public int TotalFrames => _frames.Count;
+            public int CurrentFrame => _currentIndex;
+            public Action<int>? OnFrameChanged { get; set; }
+            public Image? TargetImage { get; set; }
+            public bool IsPlaying => _isPlaying;
+
+            public GifAnimator(List<FrameData> frames)
+            {
+                _frames = frames;
+                _timer = new DispatcherTimer(); // 在 UI 线程创建，Dispatcher 正确
+                _timer.Tick += OnTick;
+            }
+
+            public BitmapSource GetFrame(int index)
+            {
+                if (_frames.Count == 0) throw new InvalidOperationException("No frames");
+                return _frames[Math.Clamp(index, 0, _frames.Count - 1)].Frame;
+            }
+
+            private void OnTick(object? sender, EventArgs e)
+            {
+                _currentIndex = (_currentIndex + 1) % _frames.Count;
+                if (TargetImage != null)
+                    TargetImage.Source = _frames[_currentIndex].Frame;
+                _timer.Interval = TimeSpan.FromMilliseconds(_frames[_currentIndex].DelayMs);
+                OnFrameChanged?.Invoke(_currentIndex);
+            }
+
+            public void Play()
+            {
+                if (_frames.Count <= 1) return;
+                _isPlaying = true;
+                _timer.Interval = TimeSpan.FromMilliseconds(_frames[_currentIndex].DelayMs);
+                _timer.Start();
+            }
+
+            public void Pause()
+            {
+                _isPlaying = false;
+                _timer.Stop();
+            }
+
+            public void Stop()
+            {
+                _isPlaying = false;
+                _timer.Stop();
+            }
+
+            public void GoToFrame(int index)
+            {
+                if (index < 0 || index >= _frames.Count) return;
+                _currentIndex = index;
+                if (TargetImage != null)
+                    TargetImage.Source = _frames[_currentIndex].Frame;
+                OnFrameChanged?.Invoke(_currentIndex);
             }
         }
     }

@@ -6,7 +6,7 @@
         SizeToContent="WidthAndHeight"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-    <Border Background="#FF2C2C2C"
+    <Border Background="#DD2B2B2B"
             BorderBrush="#FF484848"
             BorderThickness="1"
             CornerRadius="10"
