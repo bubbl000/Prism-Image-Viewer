@@ -1,0 +1,70 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- ── Common ─────────────────────────────────────────────────────── -->
+    <sys:String x:Key="Str.Ok">OK</sys:String>
+    <sys:String x:Key="Str.Cancel">Cancel</sys:String>
+    <sys:String x:Key="Str.Error">Error</sys:String>
+    <sys:String x:Key="Str.Tip">Info</sys:String>
+
+    <!-- ── Navigation ─────────────────────────────────────────────────── -->
+    <sys:String x:Key="Nav.FileAssoc">File Association</sys:String>
+    <sys:String x:Key="Nav.General">General</sys:String>
+    <sys:String x:Key="Nav.Habits">Preferences</sys:String>
+
+    <!-- ── File Association ───────────────────────────────────────────── -->
+    <sys:String x:Key="FileAssoc.Desc">After association, double-clicking an image file will open it with this program (writes to HKCU, no admin required).</sys:String>
+    <sys:String x:Key="FileAssoc.SelectAll">Select All</sys:String>
+    <sys:String x:Key="FileAssoc.SelectNone">Deselect All</sys:String>
+    <sys:String x:Key="FileAssoc.Associate">Associate Selected Formats</sys:String>
+    <sys:String x:Key="FileAssoc.NoSelection">Please select at least one format.</sys:String>
+    <sys:String x:Key="FileAssoc.Title">File Association</sys:String>
+
+    <!-- ── General ─────────────────────────────────────────────────────── -->
+    <sys:String x:Key="General.AlwaysOnTop">Always on Top</sys:String>
+    <sys:String x:Key="General.AlwaysOnTop.Desc">Keep this window above all other windows.</sys:String>
+    <sys:String x:Key="General.SmartToolbar">Smart Toolbar</sys:String>
+    <sys:String x:Key="General.SmartToolbar.Desc">Auto-hide toolbar after 1.5s of inactivity; reappear on hover.</sys:String>
+    <sys:String x:Key="General.RememberPos">Remember Window Position</sys:String>
+    <sys:String x:Key="General.RememberPos.Desc">Restore window size and position on next launch.</sys:String>
+    <sys:String x:Key="General.PixelMode">Pixel-Perfect Mode</sys:String>
+    <sys:String x:Key="General.PixelMode.Desc">Use nearest-neighbor sampling when zooming in (for pixel art).</sys:String>
+    <sys:String x:Key="General.RawOriginalView">RAW Original View</sys:String>
+    <sys:String x:Key="General.RawOriginalView.Desc">When enabled, decode RAW data via WIC (requires a RAW codec). Slower. When disabled, extract the embedded JPEG preview for faster display.</sys:String>
+    <sys:String x:Key="General.FullscreenBg">Fullscreen Background</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Desc">Background color and opacity when in fullscreen. Drag the slider for a live preview.</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Dark">Dark</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Black">Pure Black</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Opacity">Opacity</sys:String>
+
+    <!-- ── Preferences ─────────────────────────────────────────────────── -->
+    <sys:String x:Key="Habits.MultiWindow">Multi-Window Mode</sys:String>
+    <sys:String x:Key="Habits.MultiWindow.Desc">Allow multiple viewer windows to be open simultaneously.</sys:String>
+    <sys:String x:Key="Habits.RotationMode">Rotation Mode</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Desc">How rotation angle is handled when switching images.</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Manual">Per Image (reset on switch)</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Keep">Keep Angle (carry over)</sys:String>
+    <sys:String x:Key="Habits.LoopWithin">Loop Within Folder</sys:String>
+    <sys:String x:Key="Habits.LoopWithin.Desc">Loop back to the first/last image instead of triggering folder traversal.</sys:String>
+    <sys:String x:Key="Habits.ShowLoading">Loading Indicator</sys:String>
+    <sys:String x:Key="Habits.ShowLoading.Desc">Show a loading overlay when image takes more than 400 ms to load.</sys:String>
+    <sys:String x:Key="Habits.AutoNaming">Auto Naming</sys:String>
+    <sys:String x:Key="Habits.AutoNaming.Desc">Pre-fill the original filename (without extension) in Save As dialogs.</sys:String>
+    <sys:String x:Key="Habits.WheelMode">Mouse Wheel Mode</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Desc">Action performed by the mouse wheel in the image area.</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Zoom">Zoom</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Page">Page</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Scroll">Pan</sys:String>
+
+    <!-- ── Language ─────────────────────────────────────────────────────── -->
+    <sys:String x:Key="Lang.Label">Interface Language</sys:String>
+    <sys:String x:Key="Lang.ZhCN">简体中文</sys:String>
+    <sys:String x:Key="Lang.EnUS">English</sys:String>
+    <sys:String x:Key="Lang.Restart">Main window text will take effect after restart.</sys:String>
+
+    <!-- ── About ─────────────────────────────────────────────────────────── -->
+    <sys:String x:Key="About.Version">Version 2.2.1</sys:String>
+    <sys:String x:Key="About.Desc">WPF image viewer supporting multi-format browsing, thumbnails, zoom/pan, rotation, context menu, file watching, and more.</sys:String>
+
+</ResourceDictionary>

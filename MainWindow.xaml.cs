@@ -54,7 +54,7 @@ namespace ImageViewer
         private FileSystemWatcher? _fileWatcher;
 
         private static readonly string[] SupportedExts =
-            { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp" };
+            { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".psd", ".psb", ".raw" };
 
         public MainWindow()
         {
@@ -238,7 +238,7 @@ namespace ImageViewer
         }
 
         // ─── 加载入口：文件或文件夹 ───────────────────────────────────
-        private void LoadFromPath(string path)
+        public void LoadFromPath(string path)
         {
             // 停止之前的文件监视
             StopFileWatcher();
@@ -336,17 +336,22 @@ namespace ImageViewer
 
                 if (idx >= 0)
                 {
+                    bool wasCurrentFile = (idx == _currentIndex);
                     _imageFiles.RemoveAt(idx);
-                    ReloadThumbnails();
+                    if (idx < _currentIndex) _currentIndex--;
 
                     if (_imageFiles.Count == 0)
                     {
                         ClearImageState();
                     }
+                    else if (wasCurrentFile)
+                    {
+                        int newIndex = Math.Min(_currentIndex, _imageFiles.Count - 1);
+                        ShowImage(newIndex);
+                    }
                     else
                     {
-                        int newIndex = Math.Min(idx, _imageFiles.Count - 1);
-                        ShowImage(newIndex);
+                        ReloadThumbnails();
                     }
                 }
             });
@@ -510,9 +515,27 @@ namespace ImageViewer
                 }
                 else
                 {
+                    bool isRaw = filePath.EndsWith(".raw", StringComparison.OrdinalIgnoreCase);
                     bitmap = await Task.Run(() =>
                     {
                         cts.Token.ThrowIfCancellationRequested();
+                        // RAW 预览模式：提取内嵌 JPEG（速度快，无需解码器）
+                        if (isRaw && !AppSettings.Current.RawOriginalView)
+                        {
+                            byte[]? preview = TryExtractRawPreview(filePath);
+                            if (preview != null)
+                            {
+                                var ms = new System.IO.MemoryStream(preview);
+                                var rb = new BitmapImage();
+                                rb.BeginInit();
+                                rb.CacheOption = BitmapCacheOption.OnLoad;
+                                rb.StreamSource = ms;
+                                rb.EndInit();
+                                rb.Freeze();
+                                return (BitmapSource)rb;
+                            }
+                        }
+                        // 通用 WIC 解码路径（RAW 原件模式 / 其他格式）
                         var bmp = new BitmapImage();
                         bmp.BeginInit();
                         bmp.CacheOption = BitmapCacheOption.OnLoad;
@@ -1216,12 +1239,20 @@ namespace ImageViewer
             border.MouseEnter += (s, _) =>
             {
                 var b = (Border)s;
-                if ((int)b.Tag != _currentIndex) b.Background = ThumbHoverBg;
+                if ((int)b.Tag != _currentIndex)
+                {
+                    b.Background  = ThumbHoverBg;
+                    b.BorderBrush = ThumbHoverBorder;
+                }
             };
             border.MouseLeave += (s, _) =>
             {
                 var b = (Border)s;
-                if ((int)b.Tag != _currentIndex) b.Background = ThumbNormalBg;
+                if ((int)b.Tag != _currentIndex)
+                {
+                    b.Background  = ThumbNormalBg;
+                    b.BorderBrush = Brushes.Transparent;
+                }
             };
             return border;
         }
@@ -1232,6 +1263,8 @@ namespace ImageViewer
             (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2A)).GetAsFrozen();
         private static readonly SolidColorBrush ThumbHoverBg =
             (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A)).GetAsFrozen();
+        private static readonly SolidColorBrush ThumbHoverBorder =
+            (SolidColorBrush)new SolidColorBrush(Color.FromArgb(0x88, 0x90, 0xC2, 0x08)).GetAsFrozen();
 
         private void UpdateThumbSelection(int index)
         {
@@ -1603,6 +1636,13 @@ namespace ImageViewer
                       : System.Windows.Media.BitmapScalingMode.HighQuality);
         }
 
+        public void ApplyRawOriginalView()
+        {
+            if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
+            string ext = System.IO.Path.GetExtension(_imageFiles[_currentIndex]).ToLowerInvariant();
+            if (ext == ".raw") ShowImage(_currentIndex);
+        }
+
         public void ApplyFullscreenBgSettings()
         {
             if (!_isFullScreen) return;
@@ -1855,6 +1895,31 @@ namespace ImageViewer
                     TargetImage.Source = _frames[_currentIndex].Frame;
                 OnFrameChanged?.Invoke(_currentIndex);
             }
+        }
+
+        // ─── RAW 内嵌预览提取 ─────────────────────────────────────────
+        // 扫描文件找到最后一个 JPEG 起始标记（FF D8 FF），提取完整 JPEG 数据。
+        // 大多数相机 RAW 格式在文件尾部内嵌一张全尺寸 JPEG 预览。
+        private static byte[]? TryExtractRawPreview(string path)
+        {
+            try
+            {
+                byte[] data = System.IO.File.ReadAllBytes(path);
+                int lastStart = -1;
+                for (int i = 0; i < data.Length - 3; i++)
+                {
+                    if (data[i] == 0xFF && data[i + 1] == 0xD8 && data[i + 2] == 0xFF)
+                        lastStart = i;
+                }
+                if (lastStart < 0) return null;
+                for (int j = lastStart + 2; j < data.Length - 1; j++)
+                {
+                    if (data[j] == 0xFF && data[j + 1] == 0xD9)
+                        return data[lastStart..(j + 2)];
+                }
+            }
+            catch { }
+            return null;
         }
     }
 }

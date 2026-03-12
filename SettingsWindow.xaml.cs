@@ -34,23 +34,12 @@ namespace ImageViewer
             var s = AppSettings.Current;
 
             // 常规
-            ChkAlwaysOnTop.IsChecked  = s.AlwaysOnTop;
-            ChkSmartToolbar.IsChecked = s.SmartToolbar;
-            ChkRememberPos.IsChecked  = s.RememberPosition;
-            ChkPixelMode.IsChecked    = s.OriginalPixelMode;
-
-            RbBgDark.IsChecked  = s.FullscreenBgType == "dark";
-            RbBgBlack.IsChecked = s.FullscreenBgType == "black";
-            SliderOpacity.Value = s.FullscreenBgOpacity;
-            TxtOpacity.Text     = $"{(int)(s.FullscreenBgOpacity * 100)}%";
+            ChkRememberPos.IsChecked    = s.RememberPosition;
+            ChkPixelMode.IsChecked      = s.OriginalPixelMode;
+            ChkRawOriginal.IsChecked    = s.RawOriginalView;
 
             // 习惯
             ChkMultiWindow.IsChecked  = s.MultiWindow;
-            RbRotManual.IsChecked = s.RotationMode == "manual";
-            RbRotKeep.IsChecked   = s.RotationMode == "keep";
-            ChkLoopWithin.IsChecked   = s.LoopWithinFolder;
-            ChkShowLoading.IsChecked  = s.ShowLoadingIndicator;
-            ChkAutoNaming.IsChecked   = s.AutoNaming;
 
             RbWheelZoom.IsChecked   = s.WheelMode == "zoom";
             RbWheelPage.IsChecked   = s.WheelMode == "page";
@@ -98,21 +87,6 @@ namespace ImageViewer
         }
 
         // ─── 常规设置 ─────────────────────────────────────────────────
-        private void ChkAlwaysOnTop_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.AlwaysOnTop = ChkAlwaysOnTop.IsChecked == true;
-            AppSettings.Current.Save();
-            _mainWindow.ApplyAlwaysOnTop(AppSettings.Current.AlwaysOnTop);
-        }
-
-        private void ChkSmartToolbar_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.SmartToolbar = ChkSmartToolbar.IsChecked == true;
-            AppSettings.Current.Save();
-        }
-
         private void ChkRememberPos_Changed(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
@@ -128,23 +102,12 @@ namespace ImageViewer
             _mainWindow.ApplyPixelMode(AppSettings.Current.OriginalPixelMode);
         }
 
-        private void BgType_Changed(object sender, RoutedEventArgs e)
+        private void ChkRawOriginal_Changed(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
-            AppSettings.Current.FullscreenBgType = RbBgBlack.IsChecked == true ? "black" : "dark";
+            AppSettings.Current.RawOriginalView = ChkRawOriginal.IsChecked == true;
             AppSettings.Current.Save();
-            _mainWindow.ApplyFullscreenBgSettings();
-        }
-
-        private void SliderOpacity_ValueChanged(object sender,
-            System.Windows.RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtOpacity == null) return;
-            TxtOpacity.Text = $"{(int)(SliderOpacity.Value * 100)}%";
-            if (_loading) return;
-            AppSettings.Current.FullscreenBgOpacity = SliderOpacity.Value;
-            AppSettings.Current.Save();
-            _mainWindow.ApplyFullscreenBgSettings();
+            _mainWindow.ApplyRawOriginalView();
         }
 
         // ─── 习惯设置 ─────────────────────────────────────────────────
@@ -152,34 +115,6 @@ namespace ImageViewer
         {
             if (_loading) return;
             AppSettings.Current.MultiWindow = ChkMultiWindow.IsChecked == true;
-            AppSettings.Current.Save();
-        }
-
-        private void RotMode_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.RotationMode = RbRotKeep.IsChecked == true ? "keep" : "manual";
-            AppSettings.Current.Save();
-        }
-
-        private void ChkLoopWithin_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.LoopWithinFolder = ChkLoopWithin.IsChecked == true;
-            AppSettings.Current.Save();
-        }
-
-        private void ChkShowLoading_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.ShowLoadingIndicator = ChkShowLoading.IsChecked == true;
-            AppSettings.Current.Save();
-        }
-
-        private void ChkAutoNaming_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            AppSettings.Current.AutoNaming = ChkAutoNaming.IsChecked == true;
             AppSettings.Current.Save();
         }
 
@@ -209,14 +144,16 @@ namespace ImageViewer
         {
             ChkJpg.IsChecked = ChkPng.IsChecked = ChkBmp.IsChecked = ChkGif.IsChecked =
             ChkTiff.IsChecked = ChkWebp.IsChecked = ChkIco.IsChecked = ChkHeic.IsChecked =
-            ChkHeif.IsChecked = ChkAvif.IsChecked = ChkSvg.IsChecked = ChkRaw.IsChecked = true;
+            ChkHeif.IsChecked = ChkAvif.IsChecked = ChkSvg.IsChecked = ChkRaw.IsChecked =
+            ChkPsd.IsChecked = ChkPsb.IsChecked = true;
         }
 
         private void BtnAssocNone_Click(object sender, RoutedEventArgs e)
         {
             ChkJpg.IsChecked = ChkPng.IsChecked = ChkBmp.IsChecked = ChkGif.IsChecked =
             ChkTiff.IsChecked = ChkWebp.IsChecked = ChkIco.IsChecked = ChkHeic.IsChecked =
-            ChkHeif.IsChecked = ChkAvif.IsChecked = ChkSvg.IsChecked = ChkRaw.IsChecked = false;
+            ChkHeif.IsChecked = ChkAvif.IsChecked = ChkSvg.IsChecked = ChkRaw.IsChecked =
+            ChkPsd.IsChecked = ChkPsb.IsChecked = false;
         }
 
         private void BtnAssociate_Click(object sender, RoutedEventArgs e)
@@ -234,6 +171,8 @@ namespace ImageViewer
             if (ChkAvif.IsChecked == true) exts.Add(".avif");
             if (ChkSvg.IsChecked  == true) exts.Add(".svg");
             if (ChkRaw.IsChecked  == true) exts.Add(".raw");
+            if (ChkPsd.IsChecked  == true) exts.Add(".psd");
+            if (ChkPsb.IsChecked  == true) exts.Add(".psb");
 
             if (exts.Count == 0)
             {

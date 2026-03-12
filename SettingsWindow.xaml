@@ -138,8 +138,7 @@
                             </Grid.RowDefinitions>
                             <Track x:Name="PART_Track" Grid.Row="1">
                                 <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="Slider.DecreaseLarge" Height="4" Background="#90C208"
-                                                  BorderThickness="0" Template="{StaticResource {x:Static ProgressBar.ForegroundProperty}}">
+                                    <RepeatButton Command="Slider.DecreaseLarge" Height="4">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
                                                 <Border Background="#90C208" CornerRadius="2"/>
@@ -148,8 +147,7 @@
                                     </RepeatButton>
                                 </Track.DecreaseRepeatButton>
                                 <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="Slider.IncreaseLarge" Height="4" Background="#3A3A3A"
-                                                  BorderThickness="0">
+                                    <RepeatButton Command="Slider.IncreaseLarge" Height="4">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
                                                 <Border Background="#3A3A3A" CornerRadius="2"/>
@@ -239,15 +237,13 @@
                             <!-- 语言 -->
                             <TextBlock Text="{DynamicResource Lang.Label}"
                                        Foreground="#666" FontSize="10" Margin="0,0,0,4"/>
-                            <ComboBox x:Name="CboLanguage"
-                                      Background="#FF2A2A2A" Foreground="#CCCCCC"
-                                      BorderBrush="#555" FontSize="11"
+                            <ComboBox x:Name="CboLanguage" FontSize="11"
                                       SelectionChanged="CboLanguage_SelectionChanged">
                                 <ComboBoxItem Tag="zh-CN" Content="{DynamicResource Lang.ZhCN}"/>
                                 <ComboBoxItem Tag="en-US" Content="{DynamicResource Lang.EnUS}"/>
                             </ComboBox>
 
-                            <Separator Background="#333" Margin="0,10"/>
+                            <Separator Background="#333" Margin="0,0,0,10"/>
 
                             <!-- 版本信息 -->
                             <TextBlock Text="ImageViewer" Foreground="#555" FontSize="10"/>
@@ -287,6 +283,8 @@
                                         <CheckBox x:Name="ChkAvif"  Content="AVIF"        IsChecked="False" Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkSvg"   Content="SVG"         IsChecked="False" Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkRaw"   Content="RAW"         IsChecked="False" Style="{StaticResource AssocCheck}"/>
+                                        <CheckBox x:Name="ChkPsd"   Content="PSD"         IsChecked="True"  Style="{StaticResource AssocCheck}"/>
+                                        <CheckBox x:Name="ChkPsb"   Content="PSB"         IsChecked="True"  Style="{StaticResource AssocCheck}"/>
                                     </WrapPanel>
                                     <StackPanel Orientation="Horizontal">
                                         <Button Content="{DynamicResource FileAssoc.SelectAll}"
@@ -334,50 +332,6 @@
                                        Foreground="#90C208" FontSize="13" FontWeight="SemiBold"
                                        Margin="0,0,0,12"/>
 
-                            <!-- 置顶 -->
-                            <Border Style="{StaticResource Card}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{DynamicResource General.AlwaysOnTop}"
-                                                   Foreground="#CCCCCC" FontSize="12"/>
-                                        <TextBlock Text="{DynamicResource General.AlwaysOnTop.Desc}"
-                                                   Foreground="#666" FontSize="11"
-                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
-                                    </StackPanel>
-                                    <CheckBox x:Name="ChkAlwaysOnTop" Grid.Column="1"
-                                              Style="{StaticResource iOSToggle}"
-                                              VerticalAlignment="Center" Margin="12,0,0,0"
-                                              Checked="ChkAlwaysOnTop_Changed"
-                                              Unchecked="ChkAlwaysOnTop_Changed"/>
-                                </Grid>
-                            </Border>
-
-                            <!-- 智能工具栏 -->
-                            <Border Style="{StaticResource Card}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{DynamicResource General.SmartToolbar}"
-                                                   Foreground="#CCCCCC" FontSize="12"/>
-                                        <TextBlock Text="{DynamicResource General.SmartToolbar.Desc}"
-                                                   Foreground="#666" FontSize="11"
-                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
-                                    </StackPanel>
-                                    <CheckBox x:Name="ChkSmartToolbar" Grid.Column="1"
-                                              Style="{StaticResource iOSToggle}"
-                                              VerticalAlignment="Center" Margin="12,0,0,0"
-                                              Checked="ChkSmartToolbar_Changed"
-                                              Unchecked="ChkSmartToolbar_Changed"/>
-                                </Grid>
-                            </Border>
-
                             <!-- 记住窗口位置 -->
                             <Border Style="{StaticResource Card}">
                                 <Grid>
@@ -422,46 +376,28 @@
                                 </Grid>
                             </Border>
 
-                            <!-- 全屏背景 -->
+                            <!-- RAW 原件查看 -->
                             <Border Style="{StaticResource Card}">
-                                <StackPanel>
-                                    <TextBlock Text="{DynamicResource General.FullscreenBg}"
-                                               Foreground="#CCCCCC" FontSize="12"/>
-                                    <TextBlock Text="{DynamicResource General.FullscreenBg.Desc}"
-                                               Foreground="#666" FontSize="11"
-                                               TextWrapping="Wrap" Margin="0,2,0,10"/>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                        <RadioButton x:Name="RbBgDark" GroupName="BgType"
-                                                     Style="{StaticResource DarkRadio}"
-                                                     Checked="BgType_Changed">
-                                            <TextBlock Text="{DynamicResource General.FullscreenBg.Dark}"
-                                                       Foreground="#CCCCCC" FontSize="12"/>
-                                        </RadioButton>
-                                        <RadioButton x:Name="RbBgBlack" GroupName="BgType"
-                                                     Style="{StaticResource DarkRadio}"
-                                                     Checked="BgType_Changed">
-                                            <TextBlock Text="{DynamicResource General.FullscreenBg.Black}"
-                                                       Foreground="#CCCCCC" FontSize="12"/>
-                                        </RadioButton>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{DynamicResource General.RawOriginalView}"
+                                                   Foreground="#CCCCCC" FontSize="12"/>
+                                        <TextBlock Text="{DynamicResource General.RawOriginalView.Desc}"
+                                                   Foreground="#666" FontSize="11"
+                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
                                     </StackPanel>
-                                    <Grid Margin="0,0,0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{DynamicResource General.FullscreenBg.Opacity}"
-                                                   Foreground="#888" FontSize="11"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="TxtOpacity" Grid.Column="1"
-                                                   Foreground="#90C208" FontSize="11"
-                                                   VerticalAlignment="Center"/>
-                                    </Grid>
-                                    <Slider x:Name="SliderOpacity" Minimum="0" Maximum="1" Value="0.8"
-                                            TickFrequency="0.05" IsSnapToTickEnabled="False"
-                                            Style="{StaticResource GreenSlider}"
-                                            ValueChanged="SliderOpacity_ValueChanged"/>
-                                </StackPanel>
+                                    <CheckBox x:Name="ChkRawOriginal" Grid.Column="1"
+                                              Style="{StaticResource iOSToggle}"
+                                              VerticalAlignment="Center" Margin="12,0,0,0"
+                                              Checked="ChkRawOriginal_Changed"
+                                              Unchecked="ChkRawOriginal_Changed"/>
+                                </Grid>
                             </Border>
+
                         </StackPanel>
                     </ScrollViewer>
 
@@ -495,96 +431,7 @@
                                 </Grid>
                             </Border>
 
-                            <!-- 旋转模式 -->
-                            <Border Style="{StaticResource Card}">
-                                <StackPanel>
-                                    <TextBlock Text="{DynamicResource Habits.RotationMode}"
-                                               Foreground="#CCCCCC" FontSize="12"/>
-                                    <TextBlock Text="{DynamicResource Habits.RotationMode.Desc}"
-                                               Foreground="#666" FontSize="11"
-                                               TextWrapping="Wrap" Margin="0,2,0,8"/>
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton x:Name="RbRotManual" GroupName="RotMode"
-                                                     Style="{StaticResource DarkRadio}"
-                                                     Checked="RotMode_Changed">
-                                            <TextBlock Text="{DynamicResource Habits.RotationMode.Manual}"
-                                                       Foreground="#CCCCCC" FontSize="12"/>
-                                        </RadioButton>
-                                        <RadioButton x:Name="RbRotKeep" GroupName="RotMode"
-                                                     Style="{StaticResource DarkRadio}"
-                                                     Checked="RotMode_Changed">
-                                            <TextBlock Text="{DynamicResource Habits.RotationMode.Keep}"
-                                                       Foreground="#CCCCCC" FontSize="12"/>
-                                        </RadioButton>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
 
-                            <!-- 循环翻页 -->
-                            <Border Style="{StaticResource Card}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{DynamicResource Habits.LoopWithin}"
-                                                   Foreground="#CCCCCC" FontSize="12"/>
-                                        <TextBlock Text="{DynamicResource Habits.LoopWithin.Desc}"
-                                                   Foreground="#666" FontSize="11"
-                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
-                                    </StackPanel>
-                                    <CheckBox x:Name="ChkLoopWithin" Grid.Column="1"
-                                              Style="{StaticResource iOSToggle}"
-                                              VerticalAlignment="Center" Margin="12,0,0,0"
-                                              Checked="ChkLoopWithin_Changed"
-                                              Unchecked="ChkLoopWithin_Changed"/>
-                                </Grid>
-                            </Border>
-
-                            <!-- 加载提示 -->
-                            <Border Style="{StaticResource Card}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{DynamicResource Habits.ShowLoading}"
-                                                   Foreground="#CCCCCC" FontSize="12"/>
-                                        <TextBlock Text="{DynamicResource Habits.ShowLoading.Desc}"
-                                                   Foreground="#666" FontSize="11"
-                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
-                                    </StackPanel>
-                                    <CheckBox x:Name="ChkShowLoading" Grid.Column="1"
-                                              Style="{StaticResource iOSToggle}"
-                                              VerticalAlignment="Center" Margin="12,0,0,0"
-                                              Checked="ChkShowLoading_Changed"
-                                              Unchecked="ChkShowLoading_Changed"/>
-                                </Grid>
-                            </Border>
-
-                            <!-- 自动命名 -->
-                            <Border Style="{StaticResource Card}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{DynamicResource Habits.AutoNaming}"
-                                                   Foreground="#CCCCCC" FontSize="12"/>
-                                        <TextBlock Text="{DynamicResource Habits.AutoNaming.Desc}"
-                                                   Foreground="#666" FontSize="11"
-                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
-                                    </StackPanel>
-                                    <CheckBox x:Name="ChkAutoNaming" Grid.Column="1"
-                                              Style="{StaticResource iOSToggle}"
-                                              VerticalAlignment="Center" Margin="12,0,0,0"
-                                              Checked="ChkAutoNaming_Changed"
-                                              Unchecked="ChkAutoNaming_Changed"/>
-                                </Grid>
-                            </Border>
 
                             <!-- 滚轮模式 -->
                             <Border Style="{StaticResource Card}">
@@ -597,6 +444,7 @@
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton x:Name="RbWheelZoom" GroupName="WheelMode"
                                                      Style="{StaticResource DarkRadio}"
+                                                     IsChecked="True"
                                                      Checked="WheelMode_Changed">
                                             <TextBlock Text="{DynamicResource Habits.WheelMode.Zoom}"
                                                        Foreground="#CCCCCC" FontSize="12"/>
