@@ -26,6 +26,16 @@ JPG / JPEG / PNG / BMP / GIF / TIFF / TIF / WEBP / PSD / PSB / RAW
 ## 版本记录
 
 <details>
+<summary><b>v2.4</b> — 缩略图磁盘缓存 + 懒加载 + 拖拽到外部程序</summary>
+
+- 缩略图写入磁盘缓存（`%TEMP%\ImageViewerThumbCache\`），再次打开同文件夹秒出
+- 关闭超 30 分钟后下次启动自动清理缓存
+- 缩略图加载顺序从当前图片向两侧扩展（优先显示可见区）
+- 拖拽图片出窗口边界即触发外部文件 DragDrop，无需按 Ctrl
+
+</details>
+
+<details>
 <summary><b>v2.3.2</b> — RAW/PSB 格式支持 + 滚轮默认缩放 + 双窗口启动修复</summary>
 
 - RAW 文件默认提取内嵌 JPEG 预览（快速）；「RAW 原件查看」开关切换 WIC 全量解码

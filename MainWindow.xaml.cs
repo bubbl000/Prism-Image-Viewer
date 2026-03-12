@@ -1105,43 +1105,42 @@ namespace ImageViewer
         {
             if (e.LeftButton != MouseButtonState.Pressed) return;
             if (MainImage.Source == null) return;
-            if (!Keyboard.IsKeyDown(Key.LeftCtrl) && !Keyboard.IsKeyDown(Key.RightCtrl)) return;
             if (_isDragging) return;
+            if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
 
             Point pos = e.GetPosition(ZoomBorder);
             _dragCurrentPoint = pos;
-            double dx = pos.X - _dragStartPoint.X;
-            double dy = pos.Y - _dragStartPoint.Y;
-            if (Math.Sqrt(dx * dx + dy * dy) < 8) return;
-            if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
 
-            // 检查是否超出窗口边界40px
-            Point screenPos = PointToScreen(pos);
-            Rect windowRect = new Rect(Left, Top, ActualWidth, ActualHeight);
-            bool isOutside = screenPos.X < windowRect.Left - 40 ||
-                            screenPos.X > windowRect.Right + 40 ||
-                            screenPos.Y < windowRect.Top - 40 ||
-                            screenPos.Y > windowRect.Bottom + 40;
+            bool ctrlHeld = Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl);
 
-            if (isOutside)
+            if (ctrlHeld)
             {
-                // 隐藏翻页按钮
-                BtnPrev.Visibility = Visibility.Collapsed;
-                BtnNext.Visibility = Visibility.Collapsed;
-
-                _isDragging = true;
-                _isExternalDrag = true;
-                var data = new DataObject(DataFormats.FileDrop, new string[] { _imageFiles[_currentIndex] });
-                DragDrop.DoDragDrop(ZoomBorder, data, DragDropEffects.Copy | DragDropEffects.Move);
-
-                // 拖拽结束后恢复
-                _isDragging = false;
-                _isExternalDrag = false;
-                UpdateNavButtons();
-
-                // 恢复适应窗口居中状态
-                ZoomBorder.Uniform();
+                // Ctrl + 拖拽：移动超过 8px 即触发（原有行为）
+                double dx = pos.X - _dragStartPoint.X;
+                double dy = pos.Y - _dragStartPoint.Y;
+                if (Math.Sqrt(dx * dx + dy * dy) < 8) return;
             }
+            else
+            {
+                // 无 Ctrl：鼠标拖出窗口范围外才触发（不干扰窗口内的平移操作）
+                Point winPos = e.GetPosition(this);
+                bool isOutside = winPos.X < -20 || winPos.Y < -20 ||
+                                 winPos.X > ActualWidth + 20 || winPos.Y > ActualHeight + 20;
+                if (!isOutside) return;
+            }
+
+            BtnPrev.Visibility = Visibility.Collapsed;
+            BtnNext.Visibility = Visibility.Collapsed;
+
+            _isDragging = true;
+            _isExternalDrag = true;
+            var data = new DataObject(DataFormats.FileDrop, new string[] { _imageFiles[_currentIndex] });
+            DragDrop.DoDragDrop(ZoomBorder, data, DragDropEffects.Copy | DragDropEffects.Move);
+
+            _isDragging = false;
+            _isExternalDrag = false;
+            UpdateNavButtons();
+            ZoomBorder.Uniform();
         }
 
         private void ZoomBorder_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1173,17 +1172,22 @@ namespace ImageViewer
                 ThumbPanel.Children.Add(CreateThumbPlaceholder(i));
             }
 
-            // 再异步逐个加载真实缩略图
-            for (int i = 0; i < files.Count; i++)
+            // 优先加载当前图片附近的缩略图，再向两侧扩展（懒加载顺序）
+            foreach (int i in BuildThumbLoadOrder(files.Count, _currentIndex))
             {
                 if (ct.IsCancellationRequested) return;
 
                 string file = files[i];
-                BitmapImage? bmp = null;
+                BitmapSource? bmp = null;
                 try
                 {
                     bmp = await Task.Run(() =>
                     {
+                        // 1. 磁盘缓存命中 → 直接返回，极快
+                        var cached = ThumbnailCache.TryLoad(file);
+                        if (cached != null) return cached;
+
+                        // 2. 缓存未命中 → 从源文件解码（降采样到 60px 高）
                         using var stream = new FileStream(file, FileMode.Open,
                             FileAccess.Read, FileShare.Read);
                         var b = new BitmapImage();
@@ -1193,7 +1197,10 @@ namespace ImageViewer
                         b.StreamSource = stream;
                         b.EndInit();
                         b.Freeze();
-                        return b;
+
+                        // 3. 异步写入磁盘缓存（下次打开秒加载）
+                        ThumbnailCache.TrySave(file, b);
+                        return (BitmapSource)b;
                     }, ct);
                 }
                 catch (OperationCanceledException) { return; }
@@ -1207,6 +1214,21 @@ namespace ImageViewer
                 {
                     img.Source = bmp;
                 }
+            }
+        }
+
+        /// <summary>从 center 索引出发，向两侧交替展开的加载顺序。</summary>
+        private static IEnumerable<int> BuildThumbLoadOrder(int count, int center)
+        {
+            if (count == 0) yield break;
+            center = Math.Clamp(center, 0, count - 1);
+            yield return center;
+            for (int d = 1; d < count; d++)
+            {
+                int r = center + d;
+                int l = center - d;
+                if (r < count) yield return r;
+                if (l >= 0)    yield return l;
             }
         }
 

@@ -15,6 +15,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        ThumbnailCache.CheckAndClean(expireMinutes: 30);
         LocalizationManager.Apply(AppSettings.Current.Language);
 
         string? filePath = e.Args.Length > 0 && File.Exists(e.Args[0])
@@ -43,6 +44,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        ThumbnailCache.TouchMarker();
         _mutex?.ReleaseMutex();
         base.OnExit(e);
     }
