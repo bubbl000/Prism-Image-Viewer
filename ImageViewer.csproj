@@ -6,10 +6,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Wpf.Controls.PanAndZoom" Version="2.3.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 图标作为 WPF Resource 供 XAML 引用 -->
+    <Resource Include="Assets\icon.ico" />
   </ItemGroup>
 
 </Project>

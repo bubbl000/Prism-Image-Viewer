@@ -332,6 +332,28 @@
                                        Foreground="#90C208" FontSize="13" FontWeight="SemiBold"
                                        Margin="0,0,0,12"/>
 
+                            <!-- 硬件加速渲染 -->
+                            <Border Style="{StaticResource Card}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{DynamicResource General.HwAccel}"
+                                                   Foreground="#CCCCCC" FontSize="12"/>
+                                        <TextBlock Text="{DynamicResource General.HwAccel.Desc}"
+                                                   Foreground="#666" FontSize="11"
+                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="ChkHwAccel" Grid.Column="1"
+                                              Style="{StaticResource iOSToggle}"
+                                              VerticalAlignment="Center" Margin="12,0,0,0"
+                                              Checked="ChkHwAccel_Changed"
+                                              Unchecked="ChkHwAccel_Changed"/>
+                                </Grid>
+                            </Border>
+
                             <!-- 记住窗口位置 -->
                             <Border Style="{StaticResource Card}">
                                 <Grid>

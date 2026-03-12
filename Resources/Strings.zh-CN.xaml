@@ -26,6 +26,8 @@
     <sys:String x:Key="General.AlwaysOnTop.Desc">始终保持在其他窗口前方。</sys:String>
     <sys:String x:Key="General.SmartToolbar">智能工具栏</sys:String>
     <sys:String x:Key="General.SmartToolbar.Desc">无操作 1.5 秒后工具栏自动渐隐，移至底部热区重新显示。</sys:String>
+    <sys:String x:Key="General.HwAccel">硬件加速渲染</sys:String>
+    <sys:String x:Key="General.HwAccel.Desc">使用 GPU 进行界面合成渲染，提升流畅度。遇到显卡驱动兼容问题时可关闭切换为纯软件渲染。</sys:String>
     <sys:String x:Key="General.RememberPos">记住窗口位置</sys:String>
     <sys:String x:Key="General.RememberPos.Desc">下次启动时恢复窗口大小与位置。</sys:String>
     <sys:String x:Key="General.PixelMode">原始像素模式</sys:String>

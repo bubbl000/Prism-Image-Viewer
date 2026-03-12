@@ -26,6 +26,16 @@ JPG / JPEG / PNG / BMP / GIF / TIFF / TIF / WEBP / PSD / PSB / RAW
 ## 版本记录
 
 <details>
+<summary><b>v2.5</b> — 渐进加载 + 原图缓存 + 预读取 + 硬件加速</summary>
+
+- 打开图片立即显示低分辨率预览，后台加载完整图片后无缝替换
+- 原图 LRU 内存缓存（最近 7 张），顺序翻页几乎零等待
+- 预读取：加载当前图片后后台提前解码 +1、+2、-1 张
+- 常规设置新增「硬件加速渲染」开关，可切换 GPU/软件渲染模式
+
+</details>
+
+<details>
 <summary><b>v2.4</b> — 缩略图磁盘缓存 + 懒加载 + 拖拽到外部程序</summary>
 
 - 缩略图写入磁盘缓存（`%TEMP%\ImageViewerThumbCache\`），再次打开同文件夹秒出

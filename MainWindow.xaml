@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:paz="clr-namespace:Wpf.Controls.PanAndZoom;assembly=Wpf.Controls.PanAndZoom"
+        Icon="Assets/icon.ico"
         Title="图片浏览器 V2.0"
         Height="600" Width="900"
         MinHeight="300" MinWidth="480"
@@ -244,10 +245,15 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Column="0"
-                               Text="图片浏览器"
-                               Foreground="#777777" FontSize="12"
-                               VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                VerticalAlignment="Center" Margin="10,0,0,0">
+                        <Image Source="Assets/icon.ico" Width="16" Height="16"
+                               VerticalAlignment="Center" Margin="0,0,6,0"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <TextBlock Text="图片浏览器"
+                                   Foreground="#777777" FontSize="12"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
 
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"

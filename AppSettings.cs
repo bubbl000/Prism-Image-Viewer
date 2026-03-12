@@ -24,6 +24,7 @@ namespace ImageViewer
         public double? WindowHeight       { get; set; }
         public bool OriginalPixelMode     { get; set; } = false;
         public bool RawOriginalView       { get; set; } = false;
+        public bool HardwareAcceleration  { get; set; } = true;
         public string FullscreenBgType    { get; set; } = "dark";   // "dark" | "black"
         public double FullscreenBgOpacity { get; set; } = 0.8;
 

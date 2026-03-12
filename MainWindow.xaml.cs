@@ -26,6 +26,10 @@ namespace ImageViewer
         // 异步加载
         private CancellationTokenSource? _loadCts;
 
+        // 原图 LRU 内存缓存 + 预读取
+        private readonly ImageCache _imageCache = new();
+        private CancellationTokenSource? _prefetchCts;
+
         // GIF 动画
         private GifAnimator? _gifAnimator;
         private bool _suppressSliderEvent = false;
@@ -84,6 +88,7 @@ namespace ImageViewer
             if (s.OriginalPixelMode)
                 RenderOptions.SetBitmapScalingMode(MainImage,
                     System.Windows.Media.BitmapScalingMode.NearestNeighbor);
+            ApplyHardwareAcceleration(s.HardwareAcceleration);
 
             // 同步显示状态
             _thumbAlwaysOn  = s.ShowThumbnails;
@@ -331,6 +336,7 @@ namespace ImageViewer
             Dispatcher.Invoke(() =>
             {
                 string deletedFile = e.FullPath;
+                _imageCache.Remove(deletedFile);   // 移除失效缓存
                 int idx = _imageFiles.FindIndex(f =>
                     string.Equals(f, deletedFile, StringComparison.OrdinalIgnoreCase));
 
@@ -516,34 +522,28 @@ namespace ImageViewer
                 else
                 {
                     bool isRaw = filePath.EndsWith(".raw", StringComparison.OrdinalIgnoreCase);
-                    bitmap = await Task.Run(() =>
+
+                    // ── 渐进式加载：立即展示缩略图预览（毫秒级反馈） ──────
+                    var preview = ThumbnailCache.TryLoad(filePath);
+                    if (preview != null)
                     {
-                        cts.Token.ThrowIfCancellationRequested();
-                        // RAW 预览模式：提取内嵌 JPEG（速度快，无需解码器）
-                        if (isRaw && !AppSettings.Current.RawOriginalView)
+                        MainImage.Source = preview;
+                        ZoomBorder.Uniform();
+                    }
+
+                    // ── 原图内存缓存命中 → 零解码开销 ────────────────────
+                    bitmap = _imageCache.TryGet(filePath);
+                    if (bitmap == null)
+                    {
+                        bitmap = await Task.Run(() =>
                         {
-                            byte[]? preview = TryExtractRawPreview(filePath);
-                            if (preview != null)
-                            {
-                                var ms = new System.IO.MemoryStream(preview);
-                                var rb = new BitmapImage();
-                                rb.BeginInit();
-                                rb.CacheOption = BitmapCacheOption.OnLoad;
-                                rb.StreamSource = ms;
-                                rb.EndInit();
-                                rb.Freeze();
-                                return (BitmapSource)rb;
-                            }
-                        }
-                        // 通用 WIC 解码路径（RAW 原件模式 / 其他格式）
-                        var bmp = new BitmapImage();
-                        bmp.BeginInit();
-                        bmp.CacheOption = BitmapCacheOption.OnLoad;
-                        bmp.UriSource = new Uri(filePath);
-                        bmp.EndInit();
-                        bmp.Freeze();
-                        return (BitmapSource)bmp;
-                    }, cts.Token);
+                            cts.Token.ThrowIfCancellationRequested();
+                            return LoadBitmapSource(filePath, isRaw);
+                        }, cts.Token);
+
+                        if (bitmap != null && !cts.IsCancellationRequested)
+                            _imageCache.Put(filePath, bitmap);
+                    }
                 }
 
                 if (cts.IsCancellationRequested) return;
@@ -554,6 +554,7 @@ namespace ImageViewer
                 UpdateTitleInfo(filePath, bitmap!);
                 UpdateNavButtons();
                 UpdateThumbSelection(index);
+                StartPrefetch(index);   // 后台预读取相邻图片
 
                 if (_thumbAlwaysOn)
                     ShowThumbImmediate();
@@ -793,6 +794,8 @@ namespace ImageViewer
         private void ClearImageState()
         {
             _loadCts?.Cancel();
+            _prefetchCts?.Cancel();
+            _imageCache.Clear();
             StopGifAnimator();
             GifPanel.Visibility = Visibility.Collapsed;
             LoadingOverlay.Visibility = Visibility.Collapsed;
@@ -1662,7 +1665,85 @@ namespace ImageViewer
         {
             if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
             string ext = System.IO.Path.GetExtension(_imageFiles[_currentIndex]).ToLowerInvariant();
-            if (ext == ".raw") ShowImage(_currentIndex);
+            if (ext == ".raw")
+            {
+                _imageCache.Remove(_imageFiles[_currentIndex]);
+                ShowImage(_currentIndex);
+            }
+        }
+
+        public void ApplyHardwareAcceleration(bool value)
+        {
+            // HwndSource.CompositionTarget.RenderMode 是 .NET 8 WPF 中控制
+            // 硬件/软件渲染的正确 API（逐窗口生效）
+            var src = System.Windows.Interop.HwndSource.FromVisual(this)
+                      as System.Windows.Interop.HwndSource;
+            if (src?.CompositionTarget != null)
+                src.CompositionTarget.RenderMode = value
+                    ? System.Windows.Interop.RenderMode.Default
+                    : System.Windows.Interop.RenderMode.SoftwareOnly;
+        }
+
+        // ── 后台预读取相邻图片（+1, +2, -1）──────────────────────────
+        private void StartPrefetch(int centerIndex)
+        {
+            _prefetchCts?.Cancel();
+            _prefetchCts = new CancellationTokenSource();
+            var ct   = _prefetchCts.Token;
+            var files = _imageFiles.ToList();
+
+            // 预读顺序：下一张 > 下下张 > 上一张；GIF 跳过（需特殊构造）
+            var candidates = new[] { centerIndex + 1, centerIndex + 2, centerIndex - 1 }
+                .Where(i => i >= 0 && i < files.Count)
+                .Where(i => !files[i].EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+                .Where(i => !_imageCache.Contains(files[i]))
+                .Select(i => files[i])
+                .ToList();
+
+            if (candidates.Count == 0) return;
+
+            _ = Task.Run(() =>
+            {
+                foreach (string path in candidates)
+                {
+                    if (ct.IsCancellationRequested) return;
+                    try
+                    {
+                        bool isRaw = path.EndsWith(".raw", StringComparison.OrdinalIgnoreCase);
+                        var bmp = LoadBitmapSource(path, isRaw);
+                        if (!ct.IsCancellationRequested)
+                            Dispatcher.Invoke(() => _imageCache.Put(path, bmp));
+                    }
+                    catch { }
+                }
+            }, ct);
+        }
+
+        // ── WIC 解码（UI 线程外调用，可复用于 ShowImage 和 StartPrefetch）─
+        private static BitmapSource LoadBitmapSource(string filePath, bool isRaw)
+        {
+            if (isRaw && !AppSettings.Current.RawOriginalView)
+            {
+                byte[]? preview = TryExtractRawPreview(filePath);
+                if (preview != null)
+                {
+                    var ms = new System.IO.MemoryStream(preview);
+                    var rb = new BitmapImage();
+                    rb.BeginInit();
+                    rb.CacheOption = BitmapCacheOption.OnLoad;
+                    rb.StreamSource = ms;
+                    rb.EndInit();
+                    rb.Freeze();
+                    return rb;
+                }
+            }
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.UriSource   = new Uri(filePath);
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
         }
 
         public void ApplyFullscreenBgSettings()

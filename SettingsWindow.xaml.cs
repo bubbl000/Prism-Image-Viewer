@@ -34,6 +34,7 @@ namespace ImageViewer
             var s = AppSettings.Current;
 
             // 常规
+            ChkHwAccel.IsChecked        = s.HardwareAcceleration;
             ChkRememberPos.IsChecked    = s.RememberPosition;
             ChkPixelMode.IsChecked      = s.OriginalPixelMode;
             ChkRawOriginal.IsChecked    = s.RawOriginalView;
@@ -87,6 +88,14 @@ namespace ImageViewer
         }
 
         // ─── 常规设置 ─────────────────────────────────────────────────
+        private void ChkHwAccel_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            AppSettings.Current.HardwareAcceleration = ChkHwAccel.IsChecked == true;
+            AppSettings.Current.Save();
+            _mainWindow.ApplyHardwareAcceleration(AppSettings.Current.HardwareAcceleration);
+        }
+
         private void ChkRememberPos_Changed(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
@@ -205,11 +214,25 @@ namespace ImageViewer
             }
         }
 
+        // IThumbnailProvider IID（Shell 扩展固定值）
+        private const string ThumbnailProviderIid = "{E357FCCD-A995-4576-B01F-234630154E96}";
+        // WICThumbnailProvider CLSID（Windows 内置，用 WIC 解码生成缩略图）
+        private const string WicThumbnailClsid    = "{E9E4E3DC-3F3A-4056-9988-5F8A61D6D7E6}";
+
         private static void RegisterExtension(string ext, string exePath)
         {
             string progId = "ImageViewer" + ext.TrimStart('.').ToUpper();
+
             using (var extKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + ext))
+            {
                 extKey.SetValue("", progId);
+                // 告知 Explorer 这是图片文件（影响搜索分类、预览等）
+                extKey.SetValue("PerceivedType", "image");
+                // 注册 WIC 缩略图生成器（.psd/.psb 安装 WIC 解码器后即可显示缩略图）
+                using var shellexKey = extKey.CreateSubKey(@"ShellEx\" + ThumbnailProviderIid);
+                shellexKey.SetValue("", WicThumbnailClsid);
+            }
+
             using (var progKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + progId))
             {
                 progKey.SetValue("", $"ImageViewer {ext.ToUpper()} File");

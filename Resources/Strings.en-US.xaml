@@ -26,6 +26,8 @@
     <sys:String x:Key="General.AlwaysOnTop.Desc">Keep this window above all other windows.</sys:String>
     <sys:String x:Key="General.SmartToolbar">Smart Toolbar</sys:String>
     <sys:String x:Key="General.SmartToolbar.Desc">Auto-hide toolbar after 1.5s of inactivity; reappear on hover.</sys:String>
+    <sys:String x:Key="General.HwAccel">Hardware-Accelerated Rendering</sys:String>
+    <sys:String x:Key="General.HwAccel.Desc">Use GPU for UI composition and rendering. Disable if you experience rendering artifacts caused by GPU driver issues.</sys:String>
     <sys:String x:Key="General.RememberPos">Remember Window Position</sys:String>
     <sys:String x:Key="General.RememberPos.Desc">Restore window size and position on next launch.</sys:String>
     <sys:String x:Key="General.PixelMode">Pixel-Perfect Mode</sys:String>
