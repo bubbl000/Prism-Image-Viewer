@@ -1,6 +1,6 @@
 #define MyAppName "棱镜图片浏览器"
 #define MyAppNameEn "Prism Image Viewer"
-#define MyAppVersion "2.5"
+#define MyAppVersion "2.6"
 #define MyAppPublisher "棱镜"
 #define MyAppExeName "ImageViewer.exe"
 #define MyAppSrcDir "bin\Release\net8.0-windows\win-x64\publish"
@@ -14,7 +14,7 @@ AppVerName={cm:AppFullName} {#MyAppVersion}
 DefaultDirName={autopf}\{cm:AppFolder}
 DefaultGroupName={cm:AppFullName}
 OutputDir=installer_output
-OutputBaseFilename=PrismImageViewer_Setup_{#MyAppVersion}
+OutputBaseFilename=棱镜图片浏览器_Setup_{#MyAppVersion}
 SetupIconFile=Assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
