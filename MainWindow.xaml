@@ -353,6 +353,7 @@
                                 </Style>
                             </ContextMenu.Resources>
                             <MenuItem Header="重命名" Click="MenuRename_Click"/>
+                            <MenuItem Header="另存为..." Click="MenuSaveAs_Click"/>
                             <MenuItem Header="复制" Click="MenuCopy_Click"/>
 <MenuItem Header="资源管理器中打开" Click="MenuOpenInExplorer_Click"/>
                             <MenuItem Header="复制文件路径" Click="MenuCopyPath_Click"/>

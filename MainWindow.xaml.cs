@@ -1485,6 +1485,59 @@ namespace ImageViewer
             }
         }
 
+        // 另存为
+        private void MenuSaveAs_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentIndex < 0 || _currentIndex >= _imageFiles.Count) return;
+            if (MainImage.Source is not BitmapSource bmp) return;
+
+            string srcPath = _imageFiles[_currentIndex];
+            string srcExt  = Path.GetExtension(srcPath).ToLowerInvariant();
+
+            // 第一步：选格式 + JPG 质量
+            var fmtDlg = new SaveAsDialog(bmp, srcPath) { Owner = this };
+            if (fmtDlg.ShowDialog() != true) return;
+
+            string destExt = fmtDlg.ChosenFormat == "jpg" ? ".jpg" : ".png";
+            int    quality = fmtDlg.JpegQuality;
+
+            // 第二步：系统框选路径和文件名（自动填入 原名_副本）
+            var sysDlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title      = "另存为 — 选择保存位置",
+                FileName   = Path.GetFileNameWithoutExtension(srcPath) + "_副本",
+                Filter     = destExt == ".jpg"
+                    ? "JPEG 图片|*.jpg;*.jpeg|所有文件|*.*"
+                    : "PNG 图片|*.png|所有文件|*.*",
+                DefaultExt = destExt.TrimStart('.')
+            };
+            if (sysDlg.ShowDialog(this) != true) return;
+
+            // 第三步：保存
+            try
+            {
+                if (fmtDlg.ShouldCopyOriginal)
+                {
+                    File.Copy(srcPath, sysDlg.FileName, overwrite: true);
+                }
+                else if (destExt == ".jpg")
+                {
+                    using var fs = new FileStream(sysDlg.FileName, FileMode.Create, FileAccess.Write);
+                    ImageSharpHelper.EncodeJpeg(bmp, fs, quality);
+                }
+                else
+                {
+                    using var fs = new FileStream(sysDlg.FileName, FileMode.Create, FileAccess.Write);
+                    ImageSharpHelper.EncodePng(bmp, fs);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"保存失败：{ex.Message}", "错误",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         // 复制文件到剪贴板
         private void MenuCopy_Click(object sender, RoutedEventArgs e)
         {
