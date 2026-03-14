@@ -2,7 +2,7 @@
 #define MyAppNameEn "Prism Image Viewer"
 #define MyAppVersion "2.6"
 #define MyAppPublisher "棱镜"
-#define MyAppExeName "ImageViewer.exe"
+#define MyAppExeName "棱镜图片浏览器.exe"
 #define MyAppSrcDir "bin\Release\net8.0-windows\win-x64\publish"
 
 [Setup]
