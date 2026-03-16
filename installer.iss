@@ -61,12 +61,12 @@ Name: "{group}\{cm:UninstallProgram,{cm:AppFullName}}"; Filename: "{uninstallexe
 Name: "{commondesktop}\{cm:AppFullName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\ImageViewer.AssocFile"; ValueType: string; ValueData: "{cm:AppFullName}"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\ImageViewer.AssocFile\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\棱镜图片浏览器.AssocFile"; ValueType: string; ValueData: "{cm:AppFullName}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\棱镜图片浏览器.AssocFile\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{userappdata}\ImageViewer"
-Type: filesandordirs; Name: "{%TEMP}\ImageViewerThumbCache"
+Type: filesandordirs; Name: "{userappdata}\棱镜图片浏览器"
+Type: filesandordirs; Name: "{%TEMP}\棱镜图片浏览器ThumbCache"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent

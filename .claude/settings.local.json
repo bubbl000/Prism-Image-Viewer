@@ -16,7 +16,9 @@
       "Bash(rm \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\\\\SaveAsDialog.xaml\" \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\\\\SaveAsDialog.xaml.cs\" && cd \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\" && dotnet build 2>&1 | tail -8)",
       "Bash(cd \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\" && dotnet build 2>&1 | tail -25)",
       "Bash(cd \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\" && dotnet build 2>&1 | tail -8)",
-      "Bash(cd \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\" && dotnet build 2>&1 | tail -12)"
+      "Bash(cd \"E:\\\\06-xiangmu\\\\03_2345tu3\\\\ImageViewer\" && dotnet build 2>&1 | tail -12)",
+      "Bash(ls:*)",
+      "Bash(cd:*)"
     ]
   }
 }

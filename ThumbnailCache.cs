@@ -65,14 +65,14 @@ internal static class ThumbnailCache
         catch { return null; }
     }
 
-    // ── 写入缓存缩略图 ───────────────────────────────────────────
+    // ── 写入缓存缩略图（JPEG 85质量，比 PNG 小 3-5 倍，读写更快） ──
     public static void TrySave(string filePath, BitmapSource thumb)
     {
         try
         {
             Directory.CreateDirectory(CacheDir);
             string cacheFile = GetCachePath(filePath);
-            var enc = new PngBitmapEncoder();
+            var enc = new JpegBitmapEncoder { QualityLevel = 85 };
             enc.Frames.Add(BitmapFrame.Create(thumb));
             using var fs = new FileStream(cacheFile, FileMode.Create, FileAccess.Write, FileShare.None);
             enc.Save(fs);
@@ -86,7 +86,7 @@ internal static class ThumbnailCache
         long mtime = File.Exists(filePath) ? File.GetLastWriteTime(filePath).Ticks : 0L;
         string key  = $"{filePath}|{mtime}";
         byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(key));
-        return Path.Combine(CacheDir, Convert.ToHexString(hash) + ".png");
+        return Path.Combine(CacheDir, Convert.ToHexString(hash) + ".jpg");
     }
 
     private static void CleanAll()

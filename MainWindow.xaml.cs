@@ -50,6 +50,7 @@ namespace ImageViewer
 
         // 鸟瞰图
         private bool _showBirdEye = false;
+        private DispatcherTimer? _birdEyeTimer;
 
         // 文件夹穿透
         private bool _folderTraverse = false;
@@ -711,7 +712,19 @@ namespace ImageViewer
             if (MainImage.Source is not BitmapSource bmp) return;
             double zoom = ZoomBorder.ZoomX * GetFitScale(bmp) * 100.0;
             TxtZoom.Text = $"{zoom:0}%";
-            UpdateBirdEye();
+            ScheduleBirdEyeUpdate();
+        }
+
+        // 防抖：高频 LayoutUpdated 触发时，合并为最后一次 10ms 后执行
+        private void ScheduleBirdEyeUpdate()
+        {
+            if (_birdEyeTimer == null)
+            {
+                _birdEyeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+                _birdEyeTimer.Tick += (_, _) => { _birdEyeTimer.Stop(); UpdateBirdEye(); };
+            }
+            _birdEyeTimer.Stop();
+            _birdEyeTimer.Start();
         }
 
 
@@ -1081,11 +1094,14 @@ namespace ImageViewer
             AnimateToggle(FolderTraversePill, FolderTraverseDotSlider, _folderTraverse);
         }
 
+        private static readonly SolidColorBrush _pillOnBrush =
+            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x90, 0xC2, 0x08)).GetAsFrozen();
+        private static readonly SolidColorBrush _pillOffBrush =
+            (SolidColorBrush)new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3A)).GetAsFrozen();
+
         private static void AnimateToggle(Border pill, Border dot, bool isOn)
         {
-            pill.Background = new SolidColorBrush(isOn
-                ? Color.FromRgb(0x90, 0xC2, 0x08)
-                : Color.FromRgb(0x3A, 0x3A, 0x3A));
+            pill.Background = isOn ? _pillOnBrush : _pillOffBrush;
 
             dot.BeginAnimation(Canvas.LeftProperty,
                 new DoubleAnimation(isOn ? 18.0 : 2.0,
@@ -1175,49 +1191,96 @@ namespace ImageViewer
                 ThumbPanel.Children.Add(CreateThumbPlaceholder(i));
             }
 
-            // 优先加载当前图片附近的缩略图，再向两侧扩展（懒加载顺序）
+            // 并发加载（最多 3 个后台线程同时解码），按优先顺序提交任务
+            using var sem = new System.Threading.SemaphoreSlim(3);
+            var tasks = new List<Task>();
+
             foreach (int i in BuildThumbLoadOrder(files.Count, _currentIndex))
             {
-                if (ct.IsCancellationRequested) return;
+                if (ct.IsCancellationRequested) break;
 
-                string file = files[i];
-                BitmapSource? bmp = null;
-                try
+                int idx = i;
+                string file = files[idx];
+
+                await sem.WaitAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested) { sem.Release(); break; }
+
+                var t = Task.Run(async () =>
                 {
-                    bmp = await Task.Run(() =>
+                    BitmapSource? bmp = null;
+                    try
                     {
                         // 1. 磁盘缓存命中 → 直接返回，极快
-                        var cached = ThumbnailCache.TryLoad(file);
-                        if (cached != null) return cached;
+                        bmp = ThumbnailCache.TryLoad(file);
+                        if (bmp == null)
+                        {
+                            // 2. 缓存未命中 → 从源文件解码（降采样到 60px 高）
+                            BitmapImage? b = null;
+                            bool isPsdPsb = file.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                                            file.EndsWith(".psb", StringComparison.OrdinalIgnoreCase);
 
-                        // 2. 缓存未命中 → 从源文件解码（降采样到 60px 高）
-                        using var stream = new FileStream(file, FileMode.Open,
-                            FileAccess.Read, FileShare.Read);
-                        var b = new BitmapImage();
-                        b.BeginInit();
-                        b.CacheOption = BitmapCacheOption.OnLoad;
-                        b.DecodePixelHeight = 60;
-                        b.StreamSource = stream;
-                        b.EndInit();
-                        b.Freeze();
+                            if (isPsdPsb)
+                            {
+                                byte[]? previewBytes = TryExtractPsdPreview(file);
+                                if (previewBytes != null)
+                                {
+                                    using var ms = new System.IO.MemoryStream(previewBytes);
+                                    var bi = new BitmapImage();
+                                    bi.BeginInit();
+                                    bi.CacheOption      = BitmapCacheOption.OnLoad;
+                                    bi.DecodePixelHeight = 60;
+                                    bi.StreamSource     = ms;
+                                    bi.EndInit();
+                                    bi.Freeze();
+                                    b = bi;
+                                }
+                            }
+                            else
+                            {
+                                using var stream = new FileStream(file, FileMode.Open,
+                                    FileAccess.Read, FileShare.Read);
+                                var bi = new BitmapImage();
+                                bi.BeginInit();
+                                bi.CacheOption      = BitmapCacheOption.OnLoad;
+                                bi.DecodePixelHeight = 60;
+                                bi.StreamSource     = stream;
+                                bi.EndInit();
+                                bi.Freeze();
+                                b = bi;
+                            }
 
-                        // 3. 异步写入磁盘缓存（下次打开秒加载）
-                        ThumbnailCache.TrySave(file, b);
-                        return (BitmapSource)b;
-                    }, ct);
-                }
-                catch (OperationCanceledException) { return; }
-                catch { /* 跳过加载失败的缩略图 */ }
+                            // 3. 写入磁盘缓存
+                            if (b != null)
+                            {
+                                ThumbnailCache.TrySave(file, b);
+                                bmp = b;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                    catch { /* 跳过加载失败的缩略图 */ }
+                    finally { sem.Release(); }
 
-                if (ct.IsCancellationRequested) return;
+                    if (bmp != null && !ct.IsCancellationRequested)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (ct.IsCancellationRequested) return;
+                            if (idx < ThumbPanel.Children.Count &&
+                                ThumbPanel.Children[idx] is Border border &&
+                                border.Child is Image img)
+                            {
+                                img.Source = bmp;
+                            }
+                        });
+                    }
+                }, ct);
 
-                if (bmp != null && i < ThumbPanel.Children.Count &&
-                    ThumbPanel.Children[i] is Border border &&
-                    border.Child is Image img)
-                {
-                    img.Source = bmp;
-                }
+                tasks.Add(t);
             }
+
+            try { await Task.WhenAll(tasks); }
+            catch (OperationCanceledException) { }
         }
 
         /// <summary>从 center 索引出发，向两侧交替展开的加载顺序。</summary>
@@ -1790,6 +1853,31 @@ namespace ImageViewer
                     return rb;
                 }
             }
+
+            // PSD/PSB：Windows 无内置 WIC 解码器
+            // 优先解码 Image Data 块（全分辨率合并图层），回退到内嵌 JPEG 缩略图
+            bool isPsdPsb = filePath.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                            filePath.EndsWith(".psb", StringComparison.OrdinalIgnoreCase);
+            if (isPsdPsb)
+            {
+                var fullRes = TryDecodePsdComposite(filePath);
+                if (fullRes != null) return fullRes;
+
+                byte[]? preview = TryExtractPsdPreview(filePath);
+                if (preview != null)
+                {
+                    using var ms = new System.IO.MemoryStream(preview);
+                    var rb = new BitmapImage();
+                    rb.BeginInit();
+                    rb.CacheOption = BitmapCacheOption.OnLoad;
+                    rb.StreamSource = ms;
+                    rb.EndInit();
+                    rb.Freeze();
+                    return rb;
+                }
+                throw new NotSupportedException("无法读取 PSD/PSB，请确认 Photoshop 保存时已保留复合图像。");
+            }
+
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.CacheOption = BitmapCacheOption.OnLoad;
@@ -2076,6 +2164,277 @@ namespace ImageViewer
             }
             catch { }
             return null;
+        }
+
+        // ─── PSD/PSB 内嵌预览提取 ─────────────────────────────────────
+        // 解析 Image Resources 块，定位 Resource ID 0x040C（Thumbnail Resource），
+        // 提取其中的 JPEG 数据。支持 PSD（version=1）和 PSB（version=2）。
+        // 注意：需要 Photoshop 在保存时勾选保留复合图像（默认行为）。
+        private static byte[]? TryExtractPsdPreview(string path)
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                // ── Header（26 字节）────────────────────────────────────
+                byte[] sig = br.ReadBytes(4);
+                if (sig[0] != '8' || sig[1] != 'B' || sig[2] != 'P' || sig[3] != 'S') return null;
+                ushort version = PsdReadU16(br);    // 1=PSD, 2=PSB
+                if (version != 1 && version != 2) return null;
+                br.ReadBytes(6);   // reserved
+                br.ReadBytes(2);   // channels
+                br.ReadBytes(4);   // height
+                br.ReadBytes(4);   // width
+                br.ReadBytes(2);   // bit depth
+                br.ReadBytes(2);   // color mode
+
+                // ── Color Mode Data block ────────────────────────────────
+                uint colorLen = PsdReadU32(br);
+                fs.Seek(colorLen, SeekOrigin.Current);
+
+                // ── Image Resources block ────────────────────────────────
+                uint resBlockLen = PsdReadU32(br);
+                long resEnd = fs.Position + resBlockLen;
+
+                while (fs.Position < resEnd - 11)
+                {
+                    byte[] bim = br.ReadBytes(4);
+                    if (bim[0] != '8' || bim[1] != 'B' || bim[2] != 'I' || bim[3] != 'M') break;
+
+                    ushort resId = PsdReadU16(br);
+
+                    // Pascal string：length 字节 + data，整体对齐到偶数
+                    byte nameLen = br.ReadByte();
+                    br.ReadBytes(nameLen);
+                    if ((nameLen + 1) % 2 != 0) br.ReadByte();
+
+                    uint dataLen = PsdReadU32(br);
+                    long dataStart = fs.Position;
+                    long dataEnd   = dataStart + dataLen + (dataLen % 2);
+
+                    // 0x040C (1036) = Thumbnail Resource（Photoshop 5+，JPEG 格式）
+                    if (resId == 0x040C && dataLen >= 28)
+                    {
+                        uint fmt = PsdReadU32(br);   // 1 = kJpegRGB
+                        if (fmt == 1)
+                        {
+                            br.ReadBytes(4);  // width
+                            br.ReadBytes(4);  // height
+                            br.ReadBytes(4);  // widthBytes
+                            br.ReadBytes(4);  // totalSize
+                            uint jpegLen = PsdReadU32(br);
+                            br.ReadBytes(2);  // bitsPerPixel
+                            br.ReadBytes(2);  // planes
+                            if (jpegLen > 0 && jpegLen <= dataLen)
+                                return br.ReadBytes((int)jpegLen);
+                        }
+                    }
+
+                    fs.Position = dataEnd;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // ─── PSD/PSB 全分辨率合并图层解码 ────────────────────────────
+        // 解码文件末尾 Image Data 块（扁平合成图像），支持：
+        //   色彩模式：RGB / 灰度 / CMYK
+        //   位深度：8-bit / 16-bit（16-bit 取高字节，视觉无差异）
+        //   压缩方式：Raw(0) / RLE PackBits(1) / ZIP(2) / ZIP+预测(3)
+        private static BitmapSource? TryDecodePsdComposite(string path)
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                // ── Header ──────────────────────────────────────────────
+                byte[] sig = br.ReadBytes(4);
+                if (sig[0] != '8' || sig[1] != 'B' || sig[2] != 'P' || sig[3] != 'S') return null;
+                ushort version  = PsdReadU16(br);           // 1=PSD  2=PSB
+                if (version != 1 && version != 2) return null;
+                br.ReadBytes(6);                            // reserved
+                int channels  = PsdReadU16(br);
+                int height    = (int)PsdReadU32(br);
+                int width     = (int)PsdReadU32(br);
+                int bitDepth  = PsdReadU16(br);             // bits per channel
+                int colorMode = PsdReadU16(br);             // 2=Gray 4=RGB 5=CMYK
+
+                if (bitDepth  != 8 && bitDepth  != 16) return null;
+                if (colorMode != 2 && colorMode != 4 && colorMode != 5) return null;
+
+                // ── 跳过 Color Mode Data / Image Resources ───────────────
+                fs.Seek(PsdReadU32(br), SeekOrigin.Current);
+                fs.Seek(PsdReadU32(br), SeekOrigin.Current);
+
+                // ── 跳过 Layer and Mask Information ─────────────────────
+                long layerLen = version == 2 ? (long)PsdReadU64(br) : (long)PsdReadU32(br);
+                fs.Seek(layerLen, SeekOrigin.Current);
+
+                // ── Image Data ───────────────────────────────────────────
+                ushort compression = PsdReadU16(br);
+                if (compression > 3) return null;
+
+                int bps          = bitDepth / 8;            // bytes per sample
+                int numColorCh   = colorMode == 2 ? 1 : (colorMode == 5 ? 4 : 3);
+                if (channels < numColorCh) return null;
+                bool hasAlpha    = channels > numColorCh;
+                int  decodeCh    = numColorCh + (hasAlpha ? 1 : 0);
+                int  rowBytes    = width * bps;
+                int  channelSize = height * rowBytes;
+
+                byte[][] ch = new byte[decodeCh][];
+
+                if (compression == 1)   // RLE PackBits
+                {
+                    int rcSize = version == 2 ? 4 : 2;
+                    int[] rc   = new int[channels * height];
+                    for (int i = 0; i < rc.Length; i++)
+                        rc[i] = rcSize == 4 ? (int)PsdReadU32(br) : (int)PsdReadU16(br);
+
+                    for (int c = 0; c < channels; c++)
+                    {
+                        if (c < decodeCh)
+                        {
+                            ch[c] = new byte[channelSize];
+                            int off = 0;
+                            for (int row = 0; row < height; row++)
+                            {
+                                byte[] comp = br.ReadBytes(rc[c * height + row]);
+                                off += PackBitsDecode(comp, ch[c], off, rowBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int row = 0; row < height; row++)
+                                fs.Seek(rc[c * height + row], SeekOrigin.Current);
+                        }
+                    }
+                }
+                else if (compression == 2 || compression == 3)   // ZIP（type2=无预测 type3=有预测）
+                {
+                    // 剩余文件内容为单一 zlib 流，按通道顺序存放所有像素数据
+                    using var decompMs = new System.IO.MemoryStream();
+                    using (var zlib = new System.IO.Compression.ZLibStream(
+                               fs, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true))
+                        zlib.CopyTo(decompMs);
+
+                    byte[] allData = decompMs.ToArray();
+                    if (allData.Length < decodeCh * channelSize) return null;
+
+                    for (int c = 0; c < decodeCh; c++)
+                    {
+                        ch[c] = new byte[channelSize];
+                        Buffer.BlockCopy(allData, c * channelSize, ch[c], 0, channelSize);
+                    }
+
+                    // ZIP with prediction (type3)：逐行 undo delta（字节级别，与位深无关）
+                    if (compression == 3)
+                    {
+                        for (int c = 0; c < decodeCh; c++)
+                            for (int row = 0; row < height; row++)
+                            {
+                                int off = row * rowBytes;
+                                for (int col = 1; col < rowBytes; col++)
+                                    ch[c][off + col] = (byte)(ch[c][off + col] + ch[c][off + col - 1]);
+                            }
+                    }
+                }
+                else    // Raw (compression == 0)
+                {
+                    for (int c = 0; c < channels; c++)
+                    {
+                        if (c < decodeCh) ch[c] = br.ReadBytes(channelSize);
+                        else              fs.Seek(channelSize, SeekOrigin.Current);
+                    }
+                }
+
+                // ── 组装 BGRA 像素 ───────────────────────────────────────
+                byte[] pixels = new byte[width * height * 4];
+                bool isGray   = colorMode == 2;
+                bool isCmyk   = colorMode == 5;
+
+                for (int i = 0; i < width * height; i++)
+                {
+                    int s = i * bps;    // 16-bit 时 s = i*2，取高字节即可
+                    byte r, g, b, a = 255;
+
+                    if (isGray)
+                    {
+                        r = g = b = ch[0][s];
+                    }
+                    else if (isCmyk)
+                    {
+                        // PSD CMYK 存为 255 - 实际油墨量
+                        float cv = (255 - ch[0][s]) / 255f;
+                        float mv = (255 - ch[1][s]) / 255f;
+                        float yv = (255 - ch[2][s]) / 255f;
+                        float kv = (255 - ch[3][s]) / 255f;
+                        r = (byte)((1f - Math.Min(1f, cv + kv)) * 255);
+                        g = (byte)((1f - Math.Min(1f, mv + kv)) * 255);
+                        b = (byte)((1f - Math.Min(1f, yv + kv)) * 255);
+                        if (hasAlpha && decodeCh >= 5) a = ch[4][s];
+                    }
+                    else    // RGB
+                    {
+                        r = ch[0][s]; g = ch[1][s]; b = ch[2][s];
+                        if (hasAlpha) a = ch[3][s];
+                    }
+
+                    int p = i * 4;
+                    pixels[p] = b; pixels[p+1] = g; pixels[p+2] = r; pixels[p+3] = a;
+                }
+
+                var bmpSrc = BitmapSource.Create(width, height, 96, 96,
+                    PixelFormats.Bgra32, null, pixels, width * 4);
+                bmpSrc.Freeze();
+                return bmpSrc;
+            }
+            catch { return null; }
+        }
+
+        private static int PackBitsDecode(byte[] src, byte[] dst, int dstOff, int expectedBytes)
+        {
+            int si = 0, di = 0;
+            while (si < src.Length && di < expectedBytes)
+            {
+                sbyte n = (sbyte)src[si++];
+                if (n >= 0)
+                {
+                    int count = n + 1;
+                    Buffer.BlockCopy(src, si, dst, dstOff + di, count);
+                    si += count; di += count;
+                }
+                else if (n != -128)
+                {
+                    int count = -n + 1;
+                    new Span<byte>(dst, dstOff + di, count).Fill(src[si++]);
+                    di += count;
+                }
+            }
+            return di;
+        }
+
+        private static ulong PsdReadU64(BinaryReader br)
+        {
+            ulong v = 0;
+            for (int i = 0; i < 8; i++) v = (v << 8) | br.ReadByte();
+            return v;
+        }
+
+        private static ushort PsdReadU16(BinaryReader br)
+        {
+            byte b0 = br.ReadByte(), b1 = br.ReadByte();
+            return (ushort)((b0 << 8) | b1);
+        }
+
+        private static uint PsdReadU32(BinaryReader br)
+        {
+            byte b0 = br.ReadByte(), b1 = br.ReadByte(),
+                 b2 = br.ReadByte(), b3 = br.ReadByte();
+            return (uint)((b0 << 24) | (b1 << 16) | (b2 << 8) | b3);
         }
     }
 }

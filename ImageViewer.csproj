@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+    <AssemblyName>棱镜图片浏览器</AssemblyName>
+    <RootNamespace>棱镜图片浏览器</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
