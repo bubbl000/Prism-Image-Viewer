@@ -38,6 +38,7 @@ namespace ImageViewer
             ChkRememberPos.IsChecked    = s.RememberPosition;
             ChkPixelMode.IsChecked      = s.OriginalPixelMode;
             ChkRawOriginal.IsChecked    = s.RawOriginalView;
+            ChkProfessionalScale.IsChecked = s.ProfessionalFormatScaleTo4K;
 
             // 习惯
             ChkMultiWindow.IsChecked  = s.MultiWindow;
@@ -119,6 +120,13 @@ namespace ImageViewer
             _mainWindow.ApplyRawOriginalView();
         }
 
+        private void ChkProfessionalScale_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            AppSettings.Current.ProfessionalFormatScaleTo4K = ChkProfessionalScale.IsChecked == true;
+            AppSettings.Current.Save();
+        }
+
         // ─── 习惯设置 ─────────────────────────────────────────────────
         private void ChkMultiWindow_Changed(object sender, RoutedEventArgs e)
         {
@@ -180,6 +188,7 @@ namespace ImageViewer
             if (ChkAvif.IsChecked == true) exts.Add(".avif");
             if (ChkSvg.IsChecked  == true) exts.Add(".svg");
             if (ChkRaw.IsChecked  == true) exts.Add(".raw");
+            if (ChkCr3.IsChecked  == true) exts.Add(".cr3");
             if (ChkPsd.IsChecked  == true) exts.Add(".psd");
             if (ChkPsb.IsChecked  == true) exts.Add(".psb");
 

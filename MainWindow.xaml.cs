@@ -59,7 +59,7 @@ namespace ImageViewer
         private FileSystemWatcher? _fileWatcher;
 
         private static readonly string[] SupportedExts =
-            { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".psd", ".psb", ".raw" };
+            { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".psd", ".psb", ".raw", ".cr3" };
 
         public MainWindow()
         {
@@ -477,9 +477,14 @@ namespace ImageViewer
             StopGifAnimator();
             GifPanel.Visibility = Visibility.Collapsed;
 
+            // 检查是否为专业格式
+            bool isProfessionalFormat = filePath.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                                       filePath.EndsWith(".psb", StringComparison.OrdinalIgnoreCase) ||
+                                       filePath.EndsWith(".cr3", StringComparison.OrdinalIgnoreCase);
+
             // 400ms 后才显示加载提示
             var overlayCts = new CancellationTokenSource();
-            _ = ShowOverlayAfterDelay(overlayCts.Token);
+            _ = ShowOverlayAfterDelay(overlayCts.Token, isProfessionalFormat);
 
             try
             {
@@ -585,11 +590,24 @@ namespace ImageViewer
             }
         }
 
-        private async Task ShowOverlayAfterDelay(CancellationToken ct)
+        private async Task ShowOverlayAfterDelay(CancellationToken ct, bool isProfessionalFormat = false)
         {
             try
             {
                 await Task.Delay(400, ct);
+                
+                // 更新加载提示文本
+                if (isProfessionalFormat)
+                {
+                    LoadingText.Text = "正在处理专业格式文件...";
+                    LoadingSubText.Text = "首次加载会比较慢，后续会更快";
+                }
+                else
+                {
+                    LoadingText.Text = "正在加载...";
+                    LoadingSubText.Text = "";
+                }
+                
                 LoadingOverlay.Visibility = Visibility.Visible;
             }
             catch (TaskCanceledException) { }
@@ -1215,28 +1233,19 @@ namespace ImageViewer
                         if (bmp == null)
                         {
                             // 2. 缓存未命中 → 从源文件解码（降采样到 60px 高）
-                            BitmapImage? b = null;
-                            bool isPsdPsb = file.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
-                                            file.EndsWith(".psb", StringComparison.OrdinalIgnoreCase);
+                            BitmapSource? b = null;
+                            bool isProfessionalFormat = file.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                                                       file.EndsWith(".psb", StringComparison.OrdinalIgnoreCase) ||
+                                                       file.EndsWith(".cr3", StringComparison.OrdinalIgnoreCase);
 
-                            if (isPsdPsb)
+                            if (isProfessionalFormat)
                             {
-                                byte[]? previewBytes = TryExtractPsdPreview(file);
-                                if (previewBytes != null)
-                                {
-                                    using var ms = new System.IO.MemoryStream(previewBytes);
-                                    var bi = new BitmapImage();
-                                    bi.BeginInit();
-                                    bi.CacheOption      = BitmapCacheOption.OnLoad;
-                                    bi.DecodePixelHeight = 60;
-                                    bi.StreamSource     = ms;
-                                    bi.EndInit();
-                                    bi.Freeze();
-                                    b = bi;
-                                }
+                                // 专业格式使用 Magick.NET 解码
+                                b = LoadProfessionalThumbnail(file);
                             }
                             else
                             {
+                                // 标准格式使用 WIC 解码
                                 using var stream = new FileStream(file, FileMode.Open,
                                     FileAccess.Read, FileShare.Read);
                                 var bi = new BitmapImage();
@@ -1854,28 +1863,13 @@ namespace ImageViewer
                 }
             }
 
-            // PSD/PSB：Windows 无内置 WIC 解码器
-            // 优先解码 Image Data 块（全分辨率合并图层），回退到内嵌 JPEG 缩略图
-            bool isPsdPsb = filePath.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
-                            filePath.EndsWith(".psb", StringComparison.OrdinalIgnoreCase);
-            if (isPsdPsb)
+            // PSD/PSB/CR3：使用 Magick.NET 解码专业格式
+            bool isProfessionalFormat = filePath.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                                       filePath.EndsWith(".psb", StringComparison.OrdinalIgnoreCase) ||
+                                       filePath.EndsWith(".cr3", StringComparison.OrdinalIgnoreCase);
+            if (isProfessionalFormat)
             {
-                var fullRes = TryDecodePsdComposite(filePath);
-                if (fullRes != null) return fullRes;
-
-                byte[]? preview = TryExtractPsdPreview(filePath);
-                if (preview != null)
-                {
-                    using var ms = new System.IO.MemoryStream(preview);
-                    var rb = new BitmapImage();
-                    rb.BeginInit();
-                    rb.CacheOption = BitmapCacheOption.OnLoad;
-                    rb.StreamSource = ms;
-                    rb.EndInit();
-                    rb.Freeze();
-                    return rb;
-                }
-                throw new NotSupportedException("无法读取 PSD/PSB，请确认 Photoshop 保存时已保留复合图像。");
+                return LoadProfessionalImage(filePath);
             }
 
             var bmp = new BitmapImage();
@@ -2166,77 +2160,7 @@ namespace ImageViewer
             return null;
         }
 
-        // ─── PSD/PSB 内嵌预览提取 ─────────────────────────────────────
-        // 解析 Image Resources 块，定位 Resource ID 0x040C（Thumbnail Resource），
-        // 提取其中的 JPEG 数据。支持 PSD（version=1）和 PSB（version=2）。
-        // 注意：需要 Photoshop 在保存时勾选保留复合图像（默认行为）。
-        private static byte[]? TryExtractPsdPreview(string path)
-        {
-            try
-            {
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                using var br = new BinaryReader(fs);
 
-                // ── Header（26 字节）────────────────────────────────────
-                byte[] sig = br.ReadBytes(4);
-                if (sig[0] != '8' || sig[1] != 'B' || sig[2] != 'P' || sig[3] != 'S') return null;
-                ushort version = PsdReadU16(br);    // 1=PSD, 2=PSB
-                if (version != 1 && version != 2) return null;
-                br.ReadBytes(6);   // reserved
-                br.ReadBytes(2);   // channels
-                br.ReadBytes(4);   // height
-                br.ReadBytes(4);   // width
-                br.ReadBytes(2);   // bit depth
-                br.ReadBytes(2);   // color mode
-
-                // ── Color Mode Data block ────────────────────────────────
-                uint colorLen = PsdReadU32(br);
-                fs.Seek(colorLen, SeekOrigin.Current);
-
-                // ── Image Resources block ────────────────────────────────
-                uint resBlockLen = PsdReadU32(br);
-                long resEnd = fs.Position + resBlockLen;
-
-                while (fs.Position < resEnd - 11)
-                {
-                    byte[] bim = br.ReadBytes(4);
-                    if (bim[0] != '8' || bim[1] != 'B' || bim[2] != 'I' || bim[3] != 'M') break;
-
-                    ushort resId = PsdReadU16(br);
-
-                    // Pascal string：length 字节 + data，整体对齐到偶数
-                    byte nameLen = br.ReadByte();
-                    br.ReadBytes(nameLen);
-                    if ((nameLen + 1) % 2 != 0) br.ReadByte();
-
-                    uint dataLen = PsdReadU32(br);
-                    long dataStart = fs.Position;
-                    long dataEnd   = dataStart + dataLen + (dataLen % 2);
-
-                    // 0x040C (1036) = Thumbnail Resource（Photoshop 5+，JPEG 格式）
-                    if (resId == 0x040C && dataLen >= 28)
-                    {
-                        uint fmt = PsdReadU32(br);   // 1 = kJpegRGB
-                        if (fmt == 1)
-                        {
-                            br.ReadBytes(4);  // width
-                            br.ReadBytes(4);  // height
-                            br.ReadBytes(4);  // widthBytes
-                            br.ReadBytes(4);  // totalSize
-                            uint jpegLen = PsdReadU32(br);
-                            br.ReadBytes(2);  // bitsPerPixel
-                            br.ReadBytes(2);  // planes
-                            if (jpegLen > 0 && jpegLen <= dataLen)
-                                return br.ReadBytes((int)jpegLen);
-                        }
-                    }
-
-                    fs.Position = dataEnd;
-                }
-            }
-            catch { }
-            return null;
-        }
 
         // ─── PSD/PSB 全分辨率合并图层解码 ────────────────────────────
         // 解码文件末尾 Image Data 块（扁平合成图像），支持：
@@ -2435,6 +2359,197 @@ namespace ImageViewer
             byte b0 = br.ReadByte(), b1 = br.ReadByte(),
                  b2 = br.ReadByte(), b3 = br.ReadByte();
             return (uint)((b0 << 24) | (b1 << 16) | (b2 << 8) | b3);
+        }
+
+        // ─── 专业格式缓存目录 ──────────────────────────────────────
+        private static readonly string _professionalCacheDir = 
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "棱镜图片浏览器", "专业格式缓存");
+
+        // ─── 专业格式加载（使用 Magick.NET + 缓存优化）─────────────────
+        private static BitmapSource LoadProfessionalImage(string filePath)
+        {
+            try
+            {
+                // 生成缓存路径
+                string cacheKey = Path.GetFileNameWithoutExtension(filePath) + "_" + 
+                                  new FileInfo(filePath).Length.GetHashCode().ToString("X");
+                string cachePath = Path.Combine(_professionalCacheDir, cacheKey + ".jpg");
+
+                // 检查缓存是否有效
+                if (File.Exists(cachePath) && 
+                    File.GetLastWriteTime(cachePath) > File.GetLastWriteTime(filePath))
+                {
+                    // 缓存命中，直接加载缓存文件（非常快）
+                    return LoadStandardImage(cachePath);
+                }
+
+                // 使用超时机制防止无限阻塞（10秒超时）
+                var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                
+                // 在独立任务中执行 Magick.NET 操作
+                var loadTask = Task.Run(() =>
+                {
+                    using (var image = new ImageMagick.MagickImage())
+                    {
+                        // 设置图像处理配置
+                        image.Settings.SetDefine("psd:maximum-size", "8192x8192"); // 限制最大尺寸
+                        image.Settings.Compression = ImageMagick.CompressionMethod.Zip; // 优化压缩
+                        
+                        // 检查取消令牌
+                        timeoutCts.Token.ThrowIfCancellationRequested();
+                        
+                        // 读取文件
+                        image.Read(filePath);
+                        
+                        // ✨ 关键优化：根据设置决定是否缩小到合理尺寸
+                        if (AppSettings.Current.ProfessionalFormatScaleTo4K && 
+                            (image.Width > 4000 || image.Height > 4000))
+                        {
+                            // 按比例缩放到 4K 以内
+                            int newWidth = Math.Min(4000, (int)image.Width);
+                            int newHeight = (int)((long)image.Height * newWidth / image.Width);
+                            
+                            // 使用 Geometry 对象进行缩放（使用 uint 类型）
+                            var geometry = new ImageMagick.MagickGeometry((uint)newWidth, (uint)newHeight)
+                            {
+                                IgnoreAspectRatio = false
+                            };
+                            image.Resize(geometry);
+                        }
+
+                        // 创建缓存目录
+                        Directory.CreateDirectory(_professionalCacheDir);
+                        
+                        // ✨ 关键优化：使用 JPEG 作为中间格式（速度快 3-5 倍）
+                        image.Format = ImageMagick.MagickFormat.Jpeg;
+                        image.Quality = 95;  // 高质量
+                        
+                        // 生成缓存文件
+                        image.Write(cachePath);
+                        
+                        // 从缓存文件加载（确保一致性）
+                        return LoadStandardImage(cachePath);
+                    }
+                }, timeoutCts.Token);
+
+                // 等待任务完成，支持超时
+                if (loadTask.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    return loadTask.Result;
+                }
+                else
+                {
+                    timeoutCts.Cancel();
+                    throw new TimeoutException($"加载专业格式文件超时 ({Path.GetExtension(filePath)})");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException($"加载专业格式文件被取消 ({Path.GetExtension(filePath)})");
+            }
+            catch (ImageMagick.MagickException magickEx)
+            {
+                // Magick.NET 特定错误处理
+                throw new NotSupportedException($"Magick.NET 无法读取专业格式文件 ({Path.GetExtension(filePath)}): {magickEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                throw new NotSupportedException($"无法读取专业格式文件 ({Path.GetExtension(filePath)}): {ex.Message}");
+            }
+        }
+
+        // ─── 标准格式加载（用于缓存文件）─────────────────────────────
+        private static BitmapSource LoadStandardImage(string filePath)
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(filePath);
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+
+        // ─── 专业格式缩略图加载（使用 Magick.NET + 缓存优化）─────────────
+        private static BitmapSource? LoadProfessionalThumbnail(string filePath)
+        {
+            try
+            {
+                // 生成缩略图缓存路径
+                string cacheKey = Path.GetFileNameWithoutExtension(filePath) + "_thumb_" + 
+                                  new FileInfo(filePath).Length.GetHashCode().ToString("X");
+                string cachePath = Path.Combine(_professionalCacheDir, cacheKey + ".jpg");
+
+                // 检查缓存是否有效
+                if (File.Exists(cachePath) && 
+                    File.GetLastWriteTime(cachePath) > File.GetLastWriteTime(filePath))
+                {
+                    // 缓存命中，直接加载缓存文件
+                    return LoadStandardImage(cachePath);
+                }
+
+                // 使用超时机制防止无限阻塞（5秒超时）
+                var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                
+                // 在独立任务中执行 Magick.NET 操作
+                var loadTask = Task.Run(() =>
+                {
+                    using (var image = new ImageMagick.MagickImage())
+                    {
+                        // 设置缩略图专用配置
+                        image.Settings.SetDefine("psd:maximum-size", "200x200"); // 限制最大尺寸
+                        image.Settings.Compression = ImageMagick.CompressionMethod.Zip; // 优化压缩
+                        
+                        // 检查取消令牌
+                        timeoutCts.Token.ThrowIfCancellationRequested();
+                        
+                        // 读取文件
+                        image.Read(filePath);
+                        
+                        // 缩略图专用处理
+                        image.Thumbnail(60, 60); // 缩放到 60px 高度
+                        
+                        // 创建缓存目录
+                        Directory.CreateDirectory(_professionalCacheDir);
+                        
+                        // ✨ 关键优化：使用 JPEG 作为中间格式
+                        image.Format = ImageMagick.MagickFormat.Jpeg;
+                        image.Quality = 80;  // 缩略图质量稍低
+                        
+                        // 生成缓存文件
+                        image.Write(cachePath);
+                        
+                        // 从缓存文件加载
+                        return LoadStandardImage(cachePath);
+                    }
+                }, timeoutCts.Token);
+
+                // 等待任务完成，支持超时
+                if (loadTask.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    return loadTask.Result;
+                }
+                else
+                {
+                    timeoutCts.Cancel();
+                    return null; // 缩略图加载超时，静默返回 null
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return null; // 缩略图加载被取消，静默返回 null
+            }
+            catch (ImageMagick.MagickException)
+            {
+                // 缩略图加载失败时静默处理，返回 null
+                return null;
+            }
+            catch (Exception)
+            {
+                // 其他异常也静默处理
+                return null;
+            }
         }
     }
 }

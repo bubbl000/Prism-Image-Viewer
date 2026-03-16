@@ -283,6 +283,7 @@
                                         <CheckBox x:Name="ChkAvif"  Content="AVIF"        IsChecked="False" Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkSvg"   Content="SVG"         IsChecked="False" Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkRaw"   Content="RAW"         IsChecked="False" Style="{StaticResource AssocCheck}"/>
+                                        <CheckBox x:Name="ChkCr3"   Content="CR3"         IsChecked="False" Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkPsd"   Content="PSD"         IsChecked="True"  Style="{StaticResource AssocCheck}"/>
                                         <CheckBox x:Name="ChkPsb"   Content="PSB"         IsChecked="True"  Style="{StaticResource AssocCheck}"/>
                                     </WrapPanel>
@@ -417,6 +418,28 @@
                                               VerticalAlignment="Center" Margin="12,0,0,0"
                                               Checked="ChkRawOriginal_Changed"
                                               Unchecked="ChkRawOriginal_Changed"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- 专业格式缩放 -->
+                            <Border Style="{StaticResource Card}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="专业格式缩放"
+                                                   Foreground="#CCCCCC" FontSize="12"/>
+                                        <TextBlock Text="PSD/PSB 文件超过 4K 分辨率时自动缩放到 4K 以内，提升加载速度"
+                                                   Foreground="#666" FontSize="11"
+                                                   TextWrapping="Wrap" Margin="0,2,12,0"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="ChkProfessionalScale" Grid.Column="1"
+                                              Style="{StaticResource iOSToggle}"
+                                              VerticalAlignment="Center" Margin="12,0,0,0"
+                                              Checked="ChkProfessionalScale_Changed"
+                                              Unchecked="ChkProfessionalScale_Changed"/>
                                 </Grid>
                             </Border>
 

@@ -42,6 +42,9 @@ namespace ImageViewer
         public bool ShowBirdEye     { get; set; } = false;
         public bool FolderTraverse  { get; set; } = false;
 
+        // ── 专业格式设置 ─────────────────────────────────────────────────
+        public bool ProfessionalFormatScaleTo4K { get; set; } = true;
+
         // ─────────────────────────────────────────────────────────────────
         public void Save()
         {

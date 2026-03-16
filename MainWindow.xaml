@@ -408,8 +408,15 @@
                 <!-- 加载提示（延迟 400ms 才显示） -->
                 <Border x:Name="LoadingOverlay" Background="#AA000000"
                         Visibility="Collapsed" Panel.ZIndex="20">
-                    <TextBlock Text="正在加载…" Foreground="White" FontSize="16"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Orientation="Vertical" Margin="20">
+                        <TextBlock x:Name="LoadingText" Text="正在加载…" Foreground="White" 
+                                   FontSize="16" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                        <ProgressBar x:Name="LoadingProgressBar" Width="200" Height="8"
+                                     IsIndeterminate="True" Foreground="#FF4CAF50"/>
+                        <TextBlock x:Name="LoadingSubText" Text="" Foreground="#CCCCCC" 
+                                   FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                    </StackPanel>
                 </Border>
 
                 <!-- GIF 控制面板 -->
