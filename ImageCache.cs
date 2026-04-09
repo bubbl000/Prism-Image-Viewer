@@ -9,7 +9,20 @@ namespace ImageBrowser;
 /// </summary>
 internal sealed class ImageCache
 {
-    private const int MaxEntries = 7;
+    // 根据物理内存动态设置缓存数量
+    private static int MaxEntries
+    {
+        get
+        {
+            // 物理内存 > 16GB → 缓存15张
+            // 物理内存 > 8GB  → 缓存10张
+            // 否则 → 缓存7张
+            var ram = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+            if (ram > 16L * 1024 * 1024 * 1024) return 15;
+            if (ram > 8L * 1024 * 1024 * 1024) return 10;
+            return 7;
+        }
+    }
 
     // 使用 ConcurrentDictionary 保证线程安全
     private readonly ConcurrentDictionary<string, BitmapSource> _map = new();

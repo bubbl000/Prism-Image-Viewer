@@ -61,6 +61,10 @@ namespace ImageBrowser
         // 文件监视（使用增强型 SmartFileWatcher 带防抖）
         private SmartFileWatcher? _fileWatcher;
 
+        // 导航队列（连续按键优化）
+        private readonly System.Collections.Concurrent.ConcurrentQueue<int> _navigationQueue = new();
+        private CancellationTokenSource? _navCts;
+
         private static readonly string[] SupportedExts =
         {
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".psd", ".psb",
@@ -753,13 +757,15 @@ namespace ImageBrowser
                     throw new InvalidOperationException("图像解码失败，返回空bitmap");
                 }
 
+                // 先预取下一张，再显示当前图（优化连续浏览体验）
+                StartPrefetch(index);
+
                 MainImageViewer.Source = bitmap;
                 ZoomBorder.Uniform();
 
                 UpdateTitleInfo(filePath, bitmap);
                 UpdateNavButtons();
                 UpdateThumbSelection(index);
-                StartPrefetch(index);   // 后台预读取相邻图片
 
                 if (_thumbAlwaysOn)
                     ShowThumbImmediate();
@@ -811,7 +817,7 @@ namespace ImageBrowser
         {
             try
             {
-                await Task.Delay(400, ct);
+                await Task.Delay(200, ct);  // 200ms足够过滤掉快速切换
                 
                 // 更新加载提示文本
                 if (isProfessionalFormat)
@@ -929,7 +935,7 @@ namespace ImageBrowser
                 return;
             }
             int idx = (_currentIndex - 1 + _imageFiles.Count) % _imageFiles.Count;
-            ShowImage(idx);
+            EnqueueNavigation(idx);
         }
 
         private void BtnNext_Click(object sender, RoutedEventArgs e)
@@ -941,7 +947,62 @@ namespace ImageBrowser
                 return;
             }
             int idx = (_currentIndex + 1) % _imageFiles.Count;
-            ShowImage(idx);
+            EnqueueNavigation(idx);
+        }
+
+        /// <summary>
+        /// 导航入队——连续按键时合并请求，直接跳到最新的
+        /// </summary>
+        private void EnqueueNavigation(int index)
+        {
+            _navigationQueue.Enqueue(index);
+            
+            // 触发处理（如果没在处理就启动）
+            if (_navCts == null || _navCts.IsCancellationRequested)
+            {
+                _navCts = new CancellationTokenSource();
+                _ = ProcessNavigationQueueAsync(_navCts.Token);
+            }
+        }
+
+        /// <summary>
+        /// 处理导航队列——连续按键时跳过中间图片，直接显示最新的
+        /// </summary>
+        private async Task ProcessNavigationQueueAsync(CancellationToken ct)
+        {
+            int lastIndex = -1;
+            
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    // 清空队列，只保留最后一个
+                    while (_navigationQueue.TryDequeue(out int idx))
+                    {
+                        lastIndex = idx;
+                    }
+                    
+                    if (lastIndex >= 0)
+                    {
+                        // 显示最后一张请求的图片
+                        ShowImage(lastIndex);
+                        lastIndex = -1;
+                        
+                        // 留点时间让 ShowImage 完成
+                        await Task.Delay(16, ct);
+                    }
+                    else
+                    {
+                        // 队列空了，退出循环
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                // 处理完成后重置 CTS，允许下次启动新任务
+                _navCts = null;
+            }
         }
 
         // ─── 键盘导航 ─────────────────────────────────────────────────
@@ -2073,11 +2134,13 @@ namespace ImageBrowser
             var ct   = _prefetchCts.Token;
             var files = _imageFiles.ToList();
 
-            // 预读顺序：下一张 > 下下张 > 上一张；GIF 跳过（需特殊构造）
-            var candidates = new[] { centerIndex + 1, centerIndex + 2, centerIndex - 1 }
+            // 预读顺序：前后各3张，方向对称；GIF 跳过（需特殊构造）
+            var candidates = new[] { +1, +2, +3, -1, -2, -3 }
+                .Select(d => centerIndex + d)
                 .Where(i => i >= 0 && i < files.Count)
                 .Where(i => !files[i].EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
                 .Where(i => !_imageCache.Contains(files[i]))
+                .Take(6)   // 最多同时预取6张
                 .Select(i => files[i])
                 .ToList();
 
