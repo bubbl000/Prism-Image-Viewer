@@ -1,0 +1,70 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- ── 通用 ──────────────────────────────────────────────────────── -->
+    <sys:String x:Key="Str.Ok">确定</sys:String>
+    <sys:String x:Key="Str.Cancel">取消</sys:String>
+    <sys:String x:Key="Str.Error">错误</sys:String>
+    <sys:String x:Key="Str.Tip">提示</sys:String>
+
+    <!-- ── 设置窗口导航 ───────────────────────────────────────────────── -->
+    <sys:String x:Key="Nav.FileAssoc">文件关联</sys:String>
+    <sys:String x:Key="Nav.General">常规设置</sys:String>
+    <sys:String x:Key="Nav.Habits">习惯设置</sys:String>
+
+    <!-- ── 文件关联 ───────────────────────────────────────────────────── -->
+    <sys:String x:Key="FileAssoc.Desc">关联后，双击图片文件将用本程序打开（写入当前用户注册表，无需管理员权限）。</sys:String>
+    <sys:String x:Key="FileAssoc.SelectAll">全选</sys:String>
+    <sys:String x:Key="FileAssoc.SelectNone">取消全选</sys:String>
+    <sys:String x:Key="FileAssoc.Associate">立即关联所选格式</sys:String>
+    <sys:String x:Key="FileAssoc.NoSelection">请至少勾选一种格式。</sys:String>
+    <sys:String x:Key="FileAssoc.Title">文件关联</sys:String>
+
+    <!-- ── 常规设置 ───────────────────────────────────────────────────── -->
+    <sys:String x:Key="General.AlwaysOnTop">窗口置顶</sys:String>
+    <sys:String x:Key="General.AlwaysOnTop.Desc">始终保持在其他窗口前方。</sys:String>
+    <sys:String x:Key="General.SmartToolbar">智能工具栏</sys:String>
+    <sys:String x:Key="General.SmartToolbar.Desc">无操作 1.5 秒后工具栏自动渐隐，移至底部热区重新显示。</sys:String>
+    <sys:String x:Key="General.HwAccel">硬件加速渲染</sys:String>
+    <sys:String x:Key="General.HwAccel.Desc">使用 GPU 进行界面合成渲染，提升流畅度。遇到显卡驱动兼容问题时可关闭切换为纯软件渲染。</sys:String>
+    <sys:String x:Key="General.RememberPos">记住窗口位置</sys:String>
+    <sys:String x:Key="General.RememberPos.Desc">下次启动时恢复窗口大小与位置。</sys:String>
+    <sys:String x:Key="General.PixelMode">原始像素模式</sys:String>
+    <sys:String x:Key="General.PixelMode.Desc">放大时使用近邻采样，保留像素边缘（像素画适用）。</sys:String>
+    <sys:String x:Key="General.FullscreenBg">全屏背景</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Desc">全屏时的背景颜色与透明度，拖动滑条可实时预览。</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Dark">深色</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Black">纯黑</sys:String>
+    <sys:String x:Key="General.FullscreenBg.Opacity">透明度</sys:String>
+
+    <!-- ── 习惯设置 ───────────────────────────────────────────────────── -->
+    <sys:String x:Key="Habits.MultiWindow">多窗口模式</sys:String>
+    <sys:String x:Key="Habits.MultiWindow.Desc">允许同时打开多个图片查看窗口。</sys:String>
+    <sys:String x:Key="Habits.RotationMode">旋转模式</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Desc">切换图片时旋转角度的处理方式。</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Manual">每张独立（切换时自动复位）</sys:String>
+    <sys:String x:Key="Habits.RotationMode.Keep">保持角度（延续到下一张）</sys:String>
+    <sys:String x:Key="Habits.LoopWithin">循环翻页</sys:String>
+    <sys:String x:Key="Habits.LoopWithin.Desc">到达第一张 / 最后一张时自动循环，不触发文件夹穿透。</sys:String>
+    <sys:String x:Key="Habits.ShowLoading">加载提示</sys:String>
+    <sys:String x:Key="Habits.ShowLoading.Desc">图片加载超过 400 ms 时显示「正在加载…」遮罩提示。</sys:String>
+    <sys:String x:Key="Habits.AutoNaming">自动命名</sys:String>
+    <sys:String x:Key="Habits.AutoNaming.Desc">另存为时自动填入原文件名（无扩展名）。</sys:String>
+    <sys:String x:Key="Habits.WheelMode">滚轮模式</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Desc">鼠标滚轮在图片区域的操作行为。</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Zoom">缩放</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Page">翻页</sys:String>
+    <sys:String x:Key="Habits.WheelMode.Scroll">平移</sys:String>
+
+    <!-- ── 语言 ──────────────────────────────────────────────────────── -->
+    <sys:String x:Key="Lang.Label">界面语言</sys:String>
+    <sys:String x:Key="Lang.ZhCN">简体中文</sys:String>
+    <sys:String x:Key="Lang.EnUS">English</sys:String>
+    <sys:String x:Key="Lang.Restart">主窗口文字将在重启后生效。</sys:String>
+
+    <!-- ── 关于 ──────────────────────────────────────────────────────── -->
+    <sys:String x:Key="About.Version">版本 2.2.1</sys:String>
+    <sys:String x:Key="About.Desc">WPF 图片浏览器，支持多格式浏览、缩略图、缩放平移、旋转、右键菜单、文件监视等。</sys:String>
+
+</ResourceDictionary>

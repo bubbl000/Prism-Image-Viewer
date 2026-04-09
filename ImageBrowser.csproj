@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+    <AssemblyName>ImageBrowser</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    
+    <!-- COM 宿主支持 - 生成 comhost.dll -->
+    <EnableComHosting>true</EnableComHosting>
+    
+    <!-- 禁用自动生成 Assembly 属性 -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Wpf.Controls.PanAndZoom" Version="2.3.4" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.11.1" />
+    <PackageReference Include="DirectNStandard" Version="1.18.0" />
+    <PackageReference Include="WicNet" Version="1.8.4.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\icon.ico" />
+    <Resource Include="Resources\*.xaml" />
+  </ItemGroup>
+
+</Project>
