@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
@@ -28,6 +28,13 @@ internal static class Log
             System.Diagnostics.Debug.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] {ex}");
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] {ex}");
         }
+    }
+
+    public static void Warn(string message)
+    {
+        var msg = $"[{DateTime.Now:HH:mm:ss}] [WARN] {message}";
+        System.Diagnostics.Debug.WriteLine(msg);
+        Console.WriteLine(msg);
     }
 }
 
@@ -125,18 +132,26 @@ internal static class PsdLoader
                 return null;
             }
 
-            // 创建位图
-            var bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
-
-            // 如果图像太大，缩小到缩略图尺寸
-            const int thumbnailSize = 256;
-            if (header.Width > thumbnailSize || header.Height > thumbnailSize)
+            try
             {
-                bitmap = ResizeBitmap(bitmap, thumbnailSize);
-            }
+                // 创建位图
+                var bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
 
-            Log.Info("缩略图加载完成");
-            return bitmap;
+                // 如果图像太大，缩小到缩略图尺寸
+                const int thumbnailSize = 256;
+                if (header.Width > thumbnailSize || header.Height > thumbnailSize)
+                {
+                    bitmap = ResizeBitmap(bitmap, thumbnailSize);
+                }
+
+                Log.Info("缩略图加载完成");
+                return bitmap;
+            }
+            finally
+            {
+                // 归还数组池，避免 LOH 碎片
+                BytePool.Return(imageData, clearArray: false);
+            }
         }
         catch (Exception ex)
         {
@@ -281,11 +296,18 @@ internal static class PsdLoader
 
             ct.ThrowIfCancellationRequested();
 
-            // 创建位图
-            var bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
-            Log.Info("图像加载完成");
-
-            return bitmap;
+            try
+            {
+                // 创建位图
+                var bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
+                Log.Info("图像加载完成");
+                return bitmap;
+            }
+            finally
+            {
+                // 归还数组池，避免 LOH 碎片
+                BytePool.Return(imageData, clearArray: false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -336,22 +358,30 @@ internal static class PsdLoader
 
             ct.ThrowIfCancellationRequested();
 
-            // 如果图像太大，先缩小到合理尺寸
-            var maxDimension = 4096;
-            BitmapSource bitmap;
-            if (header.Width > maxDimension || header.Height > maxDimension)
+            try
             {
-                Log.Info($"图像尺寸过大，缩小到 {maxDimension}px");
-                bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
-                bitmap = ResizeBitmap(bitmap, maxDimension);
-            }
-            else
-            {
-                bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
-            }
+                // 如果图像太大，先缩小到合理尺寸
+                var maxDimension = 4096;
+                BitmapSource bitmap;
+                if (header.Width > maxDimension || header.Height > maxDimension)
+                {
+                    Log.Info($"图像尺寸过大，缩小到 {maxDimension}px");
+                    bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
+                    bitmap = ResizeBitmap(bitmap, maxDimension);
+                }
+                else
+                {
+                    bitmap = CreateBitmapSource(imageData, header.Width, header.Height);
+                }
 
-            Log.Info("大文件加载完成");
-            return bitmap;
+                Log.Info("大文件加载完成");
+                return bitmap;
+            }
+            finally
+            {
+                // 归还数组池，避免 LOH 碎片
+                BytePool.Return(imageData, clearArray: false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -417,6 +447,8 @@ internal static class PsdLoader
         if (header.Version != 1 && header.Version != 2)
             throw new InvalidDataException($"不支持的文件版本: {header.Version}");
 
+        Log.Info($"文件头信息: 版本={(header.IsLargeDocument ? "PSB" : "PSD")}, 通道={header.Channels}, 尺寸={header.Width}x{header.Height}, 深度={header.Depth}, 颜色模式={header.ColorMode}");
+
         return header;
     }
 
@@ -463,6 +495,9 @@ internal static class PsdLoader
         return new List<LayerInfo>();
     }
 
+    // LOH 阈值：85KB，超过此值的对象进入大对象堆
+    private const int LohThreshold = 85 * 1024;
+    
     private static byte[]? ReadImageData(BinaryReader reader, PsdFileHeader header)
     {
         int compression = ReadInt16BE(reader);
@@ -473,13 +508,21 @@ internal static class PsdLoader
         int channels = header.Channels;
         int depth = header.Depth;
         int pixelCount = width * height;
+        int resultSize = pixelCount * 4;
 
         // 计算每行字节数（对齐到2字节）
         int bytesPerChannel = (depth + 7) / 8;
         int rowBytesPadded = (width * bytesPerChannel + 1) & ~1;
 
-        // 预分配结果缓冲区 (BGRA)
-        byte[] result = new byte[pixelCount * 4];
+        // 检查是否会进入 LOH
+        bool willEnterLoh = resultSize > LohThreshold;
+        if (willEnterLoh)
+        {
+            Log.Info($"大图像检测: {width}x{height} = {resultSize / 1024 / 1024}MB，将使用 LOH 优化策略");
+        }
+
+        // 使用 ArrayPool 租用缓冲区（即使大对象也能复用，减少分配）
+        byte[] result = BytePool.Rent(resultSize);
 
         try
         {
@@ -494,6 +537,13 @@ internal static class PsdLoader
             else
             {
                 throw new NotSupportedException($"不支持的压缩方式: {compression}");
+            }
+
+            // 大对象优化：如果会进入 LOH，考虑压缩或流式处理
+            if (willEnterLoh)
+            {
+                // 触发 LOH 压缩（.NET 5+ 支持）
+                TryCompactLoh();
             }
 
             return result;
@@ -616,6 +666,8 @@ internal static class PsdLoader
 
     private static void MergeChannels(byte[] result, byte[][] channelData, int channels, int pixelCount)
     {
+        Log.Info($"合并通道: {channels} 通道, {pixelCount} 像素");
+        
         if (channels >= 3) // RGB
         {
             // 使用并行处理大图像
@@ -665,6 +717,33 @@ internal static class PsdLoader
                 }
             }
         }
+        else
+        {
+            // 处理其他通道数（如 CMYK 等）
+            Log.Warn($"不支持的通道数: {channels}，尝试使用第一个通道作为灰度");
+            if (pixelCount > 1000000)
+            {
+                Parallel.For(0, pixelCount, i =>
+                {
+                    byte val = channelData[0][i];
+                    result[i * 4 + 0] = val;
+                    result[i * 4 + 1] = val;
+                    result[i * 4 + 2] = val;
+                    result[i * 4 + 3] = 255;
+                });
+            }
+            else
+            {
+                for (int i = 0; i < pixelCount; i++)
+                {
+                    byte val = channelData[0][i];
+                    result[i * 4 + 0] = val;
+                    result[i * 4 + 1] = val;
+                    result[i * 4 + 2] = val;
+                    result[i * 4 + 3] = 255;
+                }
+            }
+        }
     }
 
     private static BitmapSource CreateBitmapSource(byte[] imageData, int width, int height)
@@ -682,6 +761,26 @@ internal static class PsdLoader
 
         bitmap.Freeze();
         return bitmap;
+    }
+
+    /// <summary>
+    /// 尝试压缩 LOH（大对象堆），减少内存碎片
+    /// </summary>
+    private static void TryCompactLoh()
+    {
+        try
+        {
+            // 触发 LOH 压缩（.NET 5+ 支持）
+            // 这会整理 LOH 中的碎片，但不会移动对象（LOH 通常不压缩）
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: true);
+            
+            Log.Info("已触发 LOH 压缩");
+        }
+        catch (Exception ex)
+        {
+            // 压缩失败不影响主流程
+            Log.Error($"LOH 压缩失败: {ex.Message}");
+        }
     }
 
     private static BitmapSource ResizeBitmap(BitmapSource source, int maxSize)

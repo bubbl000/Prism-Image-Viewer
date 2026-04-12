@@ -31,12 +31,19 @@ public class ThumbnailWorker : IDisposable
     /// </summary>
     public int QueueCount => _worker.QueueCount;
 
-    public ThumbnailWorker(ThumbnailCache cache, int threadCount = 4)
+    public ThumbnailWorker(ThumbnailCache cache, int? threadCount = null)
     {
         _cache = cache;
         _dispatcher = Dispatcher.CurrentDispatcher;
 
-        _worker = new QueuedWorker(threadCount)
+        // 根据 CPU 核心数动态调整线程数
+        // 默认：CPU 核心数 - 1（保留一个给 UI）
+        int threads = threadCount ?? Math.Max(2, Environment.ProcessorCount - 1);
+        
+        // 限制范围：2-16 线程（避免过少或过多）
+        threads = Math.Clamp(threads, 2, 16);
+
+        _worker = new QueuedWorker(threads)
         {
             ProcessingMode = ProcessingMode.Priority,
             PriorityQueues = 3,  // 高、中、低三级优先级

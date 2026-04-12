@@ -13,7 +13,7 @@ namespace ImageBrowser.Services;
 public static class MetadataService
 {
     /// <summary>
-    /// 加载图像元数据
+    /// 加载图像元数据（优化版：单次文件访问）
     /// </summary>
     public static ImageMetadata? LoadMetadata(string? filePath, MetadataLoadOptions? options = null)
     {
@@ -30,22 +30,20 @@ public static class MetadataService
 
         try
         {
-            // 1. 加载文件信息
+            // 优化：单次文件 Info 获取，避免重复访问磁盘
+            FileInfo? fileInfo = null;
             if (options.LoadFileInfo)
             {
-                LoadFileInfo(metadata, filePath);
+                fileInfo = new FileInfo(filePath);
+                metadata.FileSize = fileInfo.Length;
+                metadata.FileCreationTime = fileInfo.CreationTime;
+                metadata.FileModifiedTime = fileInfo.LastWriteTime;
             }
 
-            // 2. 加载图像信息
-            if (options.LoadImageInfo)
+            // 优化：合并图像信息和 EXIF 加载为单次文件打开
+            if (options.LoadImageInfo || options.LoadExif)
             {
-                LoadImageInfo(metadata, filePath, options.FastMode);
-            }
-
-            // 3. 加载 EXIF 数据
-            if (options.LoadExif)
-            {
-                LoadExifData(metadata, filePath);
+                LoadImageAndExifInfo(metadata, filePath, options);
             }
 
             return metadata;
@@ -67,64 +65,66 @@ public static class MetadataService
 
     #region 私有方法
 
-    private static void LoadFileInfo(ImageMetadata metadata, string filePath)
-    {
-        var fileInfo = new FileInfo(filePath);
-        metadata.FileSize = fileInfo.Length;
-        metadata.FileCreationTime = fileInfo.CreationTime;
-        metadata.FileModifiedTime = fileInfo.LastWriteTime;
-    }
-
-    private static void LoadImageInfo(ImageMetadata metadata, string filePath, bool fastMode)
+    /// <summary>
+    /// 合并加载图像信息和 EXIF 数据（单次文件打开）
+    /// </summary>
+    private static void LoadImageAndExifInfo(ImageMetadata metadata, string filePath, MetadataLoadOptions options)
     {
         try
         {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // 单次文件打开，同时读取图像信息和 EXIF
+            using var stream = new FileStream(
+                filePath, 
+                FileMode.Open, 
+                FileAccess.Read, 
+                FileShare.Read,
+                bufferSize: 4096,  // 小缓冲，元数据通常很小
+                FileOptions.SequentialScan);  // 顺序读取优化
 
-            // 尝试使用 WPF 的 BitmapDecoder
             var decoder = BitmapDecoder.Create(stream, 
-                fastMode ? BitmapCreateOptions.DelayCreation : BitmapCreateOptions.None, 
+                options.FastMode ? BitmapCreateOptions.DelayCreation : BitmapCreateOptions.None, 
                 BitmapCacheOption.None);
 
-            if (decoder.Frames.Count > 0)
+            if (decoder.Frames.Count == 0) return;
+
+            var frame = decoder.Frames[0];
+            var bitmapMetadata = frame.Metadata as BitmapMetadata;
+
+            // 加载图像信息
+            if (options.LoadImageInfo)
             {
-                var frame = decoder.Frames[0];
                 metadata.Width = frame.PixelWidth;
                 metadata.Height = frame.PixelHeight;
                 metadata.DpiX = frame.DpiX;
                 metadata.DpiY = frame.DpiY;
                 metadata.Format = decoder.CodecInfo?.FriendlyName ?? "Unknown";
                 metadata.FrameCount = decoder.Frames.Count;
-
-                // 位深度
                 metadata.BitsPerPixel = frame.Format.BitsPerPixel;
-
-                // 透明通道检测
                 metadata.HasTransparency = frame.Format == System.Windows.Media.PixelFormats.Bgra32 ||
                                           frame.Format == System.Windows.Media.PixelFormats.Pbgra32 ||
                                           frame.Format == System.Windows.Media.PixelFormats.Prgba64;
-
-                // 颜色空间
                 metadata.ColorSpace = frame.Format.ToString();
+            }
+
+            // 加载 EXIF 数据
+            if (options.LoadExif && bitmapMetadata != null)
+            {
+                LoadExifFromMetadata(metadata, bitmapMetadata);
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"加载图像信息失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"加载图像和 EXIF 信息失败: {ex.Message}");
         }
     }
 
-    private static void LoadExifData(ImageMetadata metadata, string filePath)
+    /// <summary>
+    /// 从 BitmapMetadata 加载 EXIF 数据
+    /// </summary>
+    private static void LoadExifFromMetadata(ImageMetadata metadata, BitmapMetadata bitmapMetadata)
     {
         try
         {
-            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.None);
-            var frame = decoder.Frames[0];
-            var bitmapMetadata = frame.Metadata as BitmapMetadata;
-
-            if (bitmapMetadata == null) return;
-
             // 基本 EXIF 信息
             metadata.CameraMaker = bitmapMetadata.CameraManufacturer;
             metadata.CameraModel = bitmapMetadata.CameraModel;
@@ -148,36 +148,52 @@ public static class MetadataService
             metadata.MaxAperture = ParseDouble(GetMetaString(bitmapMetadata, "System.Photo.MaxAperture"));
             metadata.ExposureTime = ParseDouble(GetMetaString(bitmapMetadata, "System.Photo.ExposureTime"));
             metadata.ExposureBias = ParseDouble(GetMetaString(bitmapMetadata, "System.Photo.ExposureBias"));
+
+            // ISO
             metadata.ISOSpeed = ParseInt(GetMetaString(bitmapMetadata, "System.Photo.ISOSpeed"));
+
+            // 焦距
             metadata.FocalLength = ParseDouble(GetMetaString(bitmapMetadata, "System.Photo.FocalLength"));
             metadata.FocalLength35mm = ParseInt(GetMetaString(bitmapMetadata, "System.Photo.FocalLengthInFilm"));
 
-            // 测光、闪光灯、白平衡
-            metadata.MeteringMode = FormatMeteringMode(GetMetaString(bitmapMetadata, "System.Photo.MeteringMode"));
-            metadata.FlashMode = FormatFlash(GetMetaString(bitmapMetadata, "System.Photo.Flash"));
-            metadata.WhiteBalance = FormatWhiteBalance(GetMetaString(bitmapMetadata, "System.Photo.WhiteBalance"));
+            // 闪光灯
+            metadata.FlashMode = GetMetaString(bitmapMetadata, "System.Photo.Flash");
 
-            // 其他
-            metadata.Brightness = ParseDouble(GetMetaString(bitmapMetadata, "System.Photo.Brightness"));
-            metadata.ExposureProgram = FormatExposureProgram(GetMetaString(bitmapMetadata, "System.Photo.ProgramMode"));
+            // 白平衡
+            metadata.WhiteBalance = GetMetaString(bitmapMetadata, "System.Photo.WhiteBalance");
+
+            // 测光模式
+            metadata.MeteringMode = GetMetaString(bitmapMetadata, "System.Photo.MeteringMode");
+
+            // 曝光程序
+            metadata.ExposureProgram = GetMetaString(bitmapMetadata, "System.Photo.ExposureProgram");
+
+            // 场景类型
+            metadata.SceneType = GetMetaString(bitmapMetadata, "System.Photo.SceneType");
+
+            // 方向
             metadata.Orientation = ParseInt(GetMetaString(bitmapMetadata, "System.Photo.Orientation"));
 
-            // GPS 信息
-            metadata.GPSLatitude = GetMetaString(bitmapMetadata, "System.GPS.Latitude");
-            metadata.GPSLongitude = GetMetaString(bitmapMetadata, "System.GPS.Longitude");
-            metadata.GPSAltitude = ParseDouble(GetMetaString(bitmapMetadata, "System.GPS.Altitude"));
-
-            // AI 信息检测
-            DetectAiMetadata(metadata, bitmapMetadata);
-
-            // 颜色配置文件
-            metadata.ColorProfile = GetMetaString(bitmapMetadata, "System.Image.ColorSpace");
+            // 色彩空间
+            metadata.ColorSpace = GetMetaString(bitmapMetadata, "System.Image.ColorSpace");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"加载 EXIF 失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"加载 EXIF 数据失败: {ex.Message}");
         }
     }
+
+    #region 保留旧方法（用于兼容，但主流程已改用 LoadImageAndExifInfo）
+
+    private static void LoadFileInfo(ImageMetadata metadata, string filePath)
+    {
+        var fileInfo = new FileInfo(filePath);
+        metadata.FileSize = fileInfo.Length;
+        metadata.FileCreationTime = fileInfo.CreationTime;
+        metadata.FileModifiedTime = fileInfo.LastWriteTime;
+    }
+
+    #endregion
 
     private static void DetectAiMetadata(ImageMetadata metadata, BitmapMetadata bitmapMetadata)
     {

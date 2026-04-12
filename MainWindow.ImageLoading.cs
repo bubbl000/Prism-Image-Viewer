@@ -143,6 +143,66 @@ public partial class MainWindow
                             return PsdLoader.LoadImage(filePath, cts.Token);
                         }, cts.Token);
 
+                        // 如果 PsdLoader 失败，尝试使用 Magick.NET 解码
+                        if (bitmap == null && !cts.IsCancellationRequested)
+                        {
+                            Log.Info($"PsdLoader 无法加载，尝试 Magick.NET 解码: {filePath}");
+                            try
+                            {
+                                bitmap = await Task.Run(() =>
+                                {
+                                    cts.Token.ThrowIfCancellationRequested();
+                                    using var image = new ImageMagick.MagickImage(filePath);
+                                    image.AutoOrient();
+                                    
+                                    // 转换为 BitmapSource
+                                    var pixelData = image.GetPixels().ToByteArray(ImageMagick.PixelMapping.BGRA);
+                                    if (pixelData == null) return null;
+                                    
+                                    var width = (int)image.Width;
+                                    var height = (int)image.Height;
+                                    var bmp = BitmapSource.Create(
+                                        width, height, 
+                                        96, 96, 
+                                        System.Windows.Media.PixelFormats.Pbgra32, 
+                                        null, pixelData, width * 4);
+                                    bmp.Freeze();
+                                    Log.Info($"Magick.NET 解码成功: {filePath}");
+                                    return bmp;
+                                }, cts.Token);
+                            }
+                            catch (Exception magickEx)
+                            {
+                                Log.Error($"Magick.NET 解码也失败: {magickEx.Message}");
+                                
+                                // 最后尝试 WIC
+                                try
+                                {
+                                    bitmap = await Task.Run(() =>
+                                    {
+                                        cts.Token.ThrowIfCancellationRequested();
+                                        var bmp = new BitmapImage();
+                                        bmp.BeginInit();
+                                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                                        bmp.UriSource = new Uri(filePath);
+                                        bmp.EndInit();
+                                        bmp.Freeze();
+                                        Log.Info($"WIC 解码成功: {filePath}");
+                                        return bmp as BitmapSource;
+                                    }, cts.Token);
+                                }
+                                catch (Exception wicEx)
+                                {
+                                    Log.Error($"WIC 解码也失败: {wicEx.Message}");
+                                    throw new InvalidOperationException($"PSB/PSD 解码失败: PsdLoader、Magick.NET 和 WIC 都无法加载此文件。Magick 错误: {magickEx.Message}, WIC 错误: {wicEx.Message}", wicEx);
+                                }
+                            }
+                        }
+                        else if (bitmap != null)
+                        {
+                            Log.Info($"PsdLoader 加载成功: {filePath}");
+                        }
+
                         if (bitmap != null && !cts.IsCancellationRequested)
                             _imageCache.Put(filePath, bitmap);
                     }
@@ -184,26 +244,39 @@ public partial class MainWindow
             // 先预取下一张，再显示当前图（优化连续浏览体验）
             StartPrefetch(index);
 
-            MainImageViewer.Source = bitmap;
-            ZoomBorder.Uniform();
-
-            UpdateTitleInfo(filePath, bitmap);
-            UpdateNavButtons();
-            UpdateThumbSelection(index);
-
-            if (_thumbAlwaysOn)
-                ShowThumbImmediate();
-            else if (_smartThumb && ThumbStrip.Visibility == Visibility.Collapsed)
-                PrepareSmartThumb();
-
-            if (_showBirdEye)
+            // 分层 UI 更新：高优先级 - 立即显示图片（用户最关注）
+            await Dispatcher.InvokeAsync(() =>
             {
-                BirdEyeImage.Source = bitmap;
-                BirdEyePanel.Visibility = Visibility.Visible;
-            }
+                MainImageViewer.Source = bitmap;
+                ZoomBorder.Uniform();
+                EmptyState.Visibility = Visibility.Collapsed;
+            }, DispatcherPriority.Render);
 
-            UpdateInfoWindow();
-            EmptyState.Visibility = Visibility.Collapsed;
+            // 分层 UI 更新：中优先级 - 更新标题和导航（次要信息）
+            await Dispatcher.InvokeAsync(() =>
+            {
+                UpdateTitleInfo(filePath, bitmap);
+                UpdateNavButtons();
+            }, DispatcherPriority.Background);
+
+            // 分层 UI 更新：低优先级 - 缩略图和其他 UI（最不紧急）
+            await Dispatcher.InvokeAsync(() =>
+            {
+                UpdateThumbSelection(index);
+
+                if (_thumbAlwaysOn)
+                    ShowThumbImmediate();
+                else if (_smartThumb && ThumbStrip.Visibility == Visibility.Collapsed)
+                    PrepareSmartThumb();
+
+                if (_showBirdEye)
+                {
+                    BirdEyeImage.Source = bitmap;
+                    BirdEyePanel.Visibility = Visibility.Visible;
+                }
+
+                UpdateInfoWindow();
+            }, DispatcherPriority.ApplicationIdle);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

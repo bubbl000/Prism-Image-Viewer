@@ -59,7 +59,16 @@
 
 <details>
 <summary>点击展开查看完整版本历史</summary>
+### v2.0.1
 
+- 重构为 LinkedList + Dictionary 组合，实现真正的 LRU 淘汰策略
+- BackgroundWorker 替换为 Channel + Task 实现，确保所有共享数据访问都在锁内
+- MainWindow.xaml.cs 过大，已拆分为多个文件
+- FileStream 改为 File.ReadAllBytesAsync 和 File.WriteAllBytesAsync ，实现真正的异步 IO
+- 使用 Windows API GlobalMemoryStatusEx 获取真实物理内存信息
+- ReadyToRun + TieredCompilation优化 启动速度
+- 异步 IO 优化 - AsyncFileLoader.cs
+- 智能加载策略 - MainWindow.ImageProcessing.cs
 ### v2.0.0 (当前版本)
 
 #### 核心重构
