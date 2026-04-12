@@ -28,7 +28,7 @@ public class DiskCache : IDisposable
     private const string CacheFileExt = ".thumb";
 
     /// <summary>
-    /// 当前缓存大小（字节）
+    /// 当前缓存大小（字节）- 使用增量更新优化性能
     /// </summary>
     public long CurrentCacheSize { get; private set; }
 
@@ -47,8 +47,8 @@ public class DiskCache : IDisposable
         // 确保缓存目录存在
         Directory.CreateDirectory(_cacheDir);
 
-        // 初始化时计算当前缓存大小
-        UpdateCacheSize();
+        // 初始化时计算当前缓存大小（仅在构造函数中执行一次完整扫描）
+        RecalculateCacheSize();
 
         // 启动定时清理（每30分钟检查一次）
         _cleanupTimer = new Timer(CleanupCallback, null, TimeSpan.FromMinutes(30), TimeSpan.FromMinutes(30));
@@ -95,7 +95,7 @@ public class DiskCache : IDisposable
     }
 
     /// <summary>
-    /// 写入缓存
+    /// 写入缓存（使用增量更新缓存大小）
     /// </summary>
     public void Write(string id, Stream data)
     {
@@ -109,13 +109,21 @@ public class DiskCache : IDisposable
                 // 检查是否需要清理
                 EnsureCacheSpace(data.Length);
 
+                // 如果文件已存在，先减去旧文件大小
+                if (File.Exists(filePath))
+                {
+                    var oldFileInfo = new FileInfo(filePath);
+                    CurrentCacheSize -= oldFileInfo.Length;
+                }
+
                 // 写入文件
                 using var fileStream = File.Create(filePath);
                 data.Position = 0;
                 data.CopyTo(fileStream);
 
-                // 更新缓存大小
-                UpdateCacheSize();
+                // 增量更新缓存大小
+                var newFileInfo = new FileInfo(filePath);
+                CurrentCacheSize += newFileInfo.Length;
             }
             catch (Exception ex)
             {
@@ -155,7 +163,7 @@ public class DiskCache : IDisposable
     }
 
     /// <summary>
-    /// 删除缓存
+    /// 删除缓存（使用增量更新缓存大小）
     /// </summary>
     public void Remove(string id)
     {
@@ -168,8 +176,11 @@ public class DiskCache : IDisposable
             {
                 try
                 {
+                    var fileInfo = new FileInfo(filePath);
                     File.Delete(filePath);
-                    UpdateCacheSize();
+                    // 增量更新缓存大小
+                    CurrentCacheSize -= fileInfo.Length;
+                    if (CurrentCacheSize < 0) CurrentCacheSize = 0;
                 }
                 catch { }
             }
@@ -210,7 +221,7 @@ public class DiskCache : IDisposable
     }
 
     /// <summary>
-    /// 确保有足够的缓存空间
+    /// 确保有足够的缓存空间（使用增量更新）
     /// </summary>
     private void EnsureCacheSpace(long requiredSpace)
     {
@@ -232,6 +243,8 @@ public class DiskCache : IDisposable
             {
                 freedSpace += file.Length;
                 File.Delete(file.FullName);
+                // 增量更新缓存大小
+                CurrentCacheSize -= file.Length;
 
                 if (freedSpace >= spaceToFree)
                     break;
@@ -239,13 +252,14 @@ public class DiskCache : IDisposable
             catch { }
         }
 
-        UpdateCacheSize();
+        // 确保缓存大小不为负
+        if (CurrentCacheSize < 0) CurrentCacheSize = 0;
     }
 
     /// <summary>
-    /// 更新缓存大小统计
+    /// 重新计算缓存大小（完整扫描，仅在初始化时调用）
     /// </summary>
-    private void UpdateCacheSize()
+    private void RecalculateCacheSize()
     {
         try
         {
@@ -283,11 +297,14 @@ public class DiskCache : IDisposable
                         if (fileInfo.LastAccessTime < cutoffDate)
                         {
                             File.Delete(file);
+                            // 增量更新缓存大小
+                            CurrentCacheSize -= fileInfo.Length;
                         }
                     }
                     catch { }
                 }
-                UpdateCacheSize();
+                // 确保缓存大小不为负
+                if (CurrentCacheSize < 0) CurrentCacheSize = 0;
             }
             catch { }
         }
@@ -300,12 +317,11 @@ public class DiskCache : IDisposable
     {
         lock (_lockObject)
         {
-            var files = Directory.GetFiles(_cacheDir, "*" + CacheFileExt);
             return new CacheStats
             {
-                TotalFiles = files.Length,
-                TotalSize = CurrentCacheSize,
+                CurrentSize = CurrentCacheSize,
                 MaxSize = _maxCacheSize,
+                FileCount = Directory.GetFiles(_cacheDir, "*" + CacheFileExt).Length,
                 HitCount = HitCount,
                 MissCount = MissCount,
                 HitRate = HitRate
@@ -313,6 +329,9 @@ public class DiskCache : IDisposable
         }
     }
 
+    /// <summary>
+    /// 释放资源
+    /// </summary>
     public void Dispose()
     {
         _cleanupTimer?.Dispose();
@@ -324,26 +343,10 @@ public class DiskCache : IDisposable
 /// </summary>
 public class CacheStats
 {
-    public int TotalFiles { get; set; }
-    public long TotalSize { get; set; }
+    public long CurrentSize { get; set; }
     public long MaxSize { get; set; }
+    public int FileCount { get; set; }
     public long HitCount { get; set; }
     public long MissCount { get; set; }
     public double HitRate { get; set; }
-
-    public string TotalSizeFormatted => FormatBytes(TotalSize);
-    public string MaxSizeFormatted => FormatBytes(MaxSize);
-
-    private static string FormatBytes(long bytes)
-    {
-        string[] sizes = { "B", "KB", "MB", "GB" };
-        int order = 0;
-        double size = bytes;
-        while (size >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            size /= 1024;
-        }
-        return $"{size:0.##} {sizes[order]}";
-    }
 }

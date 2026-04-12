@@ -1,4 +1,5 @@
 using ImageMagick;
+using System.Diagnostics;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -274,22 +275,61 @@ public class ProgressiveImageLoader
     {
         var width = (int)image.Width;
         var height = (int)image.Height;
-        var pixelData = image.GetPixels().ToByteArray(PixelMapping.RGBA);
+        byte[]? pixelData = null;
 
-        if (pixelData == null)
+        // 尝试 RGBA 映射
+        try
         {
-            pixelData = image.GetPixels().ToByteArray(PixelMapping.BGRA);
+            pixelData = image.GetPixels().ToByteArray(PixelMapping.RGBA);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ProgressiveImageLoader] RGBA 映射失败: {ex.Message}");
         }
 
+        // 如果 RGBA 失败，尝试 BGRA
         if (pixelData == null)
         {
-            throw new InvalidOperationException("无法获取图像像素数据");
+            try
+            {
+                pixelData = image.GetPixels().ToByteArray(PixelMapping.BGRA);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ProgressiveImageLoader] BGRA 映射失败: {ex.Message}");
+            }
+        }
+
+        // 如果两种映射都失败，尝试其他格式
+        if (pixelData == null)
+        {
+            try
+            {
+                // 尝试使用 MagickImage 的 Write 方法转换为 PNG 字节流
+                using var ms = new MemoryStream();
+                image.Format = MagickFormat.Png;
+                image.Write(ms);
+                ms.Position = 0;
+
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.StreamSource = ms;
+                bitmap.EndInit();
+                bitmap.Freeze();
+                return bitmap;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ProgressiveImageLoader] PNG 回退转换失败: {ex.Message}");
+                throw new InvalidOperationException("无法获取图像像素数据，所有转换方式均失败", ex);
+            }
         }
 
         var stride = width * 4;
-        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Pbgra32, null, pixelData, stride);
-        bitmap.Freeze();
-        return bitmap;
+        var bitmapSource = BitmapSource.Create(width, height, 96, 96, PixelFormats.Pbgra32, null, pixelData, stride);
+        bitmapSource.Freeze();
+        return bitmapSource;
     }
 
     public void Dispose()

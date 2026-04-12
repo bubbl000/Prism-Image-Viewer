@@ -1,11 +1,10 @@
-using System.Collections.Concurrent;
 using System.Windows.Media.Imaging;
 
 namespace ImageBrowser;
 
 /// <summary>
 /// 原图 LRU 内存缓存（最多 <see cref="MaxEntries"/> 张已解码的完整 BitmapSource）。
-/// 使用 ConcurrentDictionary 保证线程安全。
+/// 使用 LinkedList + Dictionary 实现真正的 LRU 缓存。
 /// </summary>
 internal sealed class ImageCache
 {
@@ -24,79 +23,126 @@ internal sealed class ImageCache
         }
     }
 
-    // 使用 ConcurrentDictionary 保证线程安全
-    private readonly ConcurrentDictionary<string, BitmapSource> _map = new();
-    // 使用 ConcurrentQueue 记录访问顺序（简化 LRU 实现）
-    private readonly ConcurrentQueue<string> _accessQueue = new();
+    // 缓存条目
+    private class CacheEntry
+    {
+        public string Path { get; set; } = null!;
+        public BitmapSource Bitmap { get; set; } = null!;
+        public LinkedListNode<CacheEntry>? Node { get; set; }
+    }
+
+    // 使用 Dictionary 实现 O(1) 查找
+    private readonly Dictionary<string, CacheEntry> _map = new();
+    // 使用 LinkedList 实现 O(1) 的 LRU 移动和淘汰
+    private readonly LinkedList<CacheEntry> _lruList = new();
     // 用于同步的锁对象
     private readonly object _lockObject = new();
 
     // ── 读取（同时将条目移到链表头，刷新 LRU 顺序） ──────────────
     public BitmapSource? TryGet(string path)
     {
-        if (!_map.TryGetValue(path, out var bmp)) return null;
-        
-        // 记录访问（使用锁保护队列操作）
         lock (_lockObject)
         {
-            // 重新入队表示最近访问
-            _accessQueue.Enqueue(path);
+            if (!_map.TryGetValue(path, out var entry))
+                return null;
+
+            // 移动到链表头部（最近使用）
+            if (entry.Node != null && entry.Node.List != null)
+            {
+                _lruList.Remove(entry.Node);
+                _lruList.AddFirst(entry.Node);
+            }
+
+            return entry.Bitmap;
         }
-        
-        return bmp;
     }
 
-    public bool Contains(string path) => _map.ContainsKey(path);
+    public bool Contains(string path)
+    {
+        lock (_lockObject)
+        {
+            return _map.ContainsKey(path);
+        }
+    }
 
     // ── 写入（超出上限时淘汰最久未用的条目） ─────────────────────
     public void Put(string path, BitmapSource bmp)
     {
-        // 如果已存在，更新值
-        if (_map.ContainsKey(path))
-        {
-            _map[path] = bmp;
-            lock (_lockObject)
-            {
-                _accessQueue.Enqueue(path);
-            }
-            return;
-        }
-
-        // 检查是否需要淘汰
         lock (_lockObject)
         {
-            while (_map.Count >= MaxEntries && _accessQueue.TryDequeue(out var lruPath))
+            // 如果已存在，更新值并移动到头部
+            if (_map.TryGetValue(path, out var existingEntry))
             {
-                // 只有当路径确实在字典中且没有其他引用时才移除
-                if (_map.TryRemove(lruPath, out _))
+                existingEntry.Bitmap = bmp;
+                if (existingEntry.Node != null && existingEntry.Node.List != null)
                 {
-                    break;
+                    _lruList.Remove(existingEntry.Node);
+                    _lruList.AddFirst(existingEntry.Node);
+                }
+                return;
+            }
+
+            // 检查是否需要淘汰
+            while (_map.Count >= MaxEntries && _lruList.Count > 0)
+            {
+                // 移除链表尾部（最久未使用）
+                var lruEntry = _lruList.Last;
+                if (lruEntry != null)
+                {
+                    _lruList.RemoveLast();
+                    _map.Remove(lruEntry.Value.Path);
                 }
             }
-        }
 
-        // 添加新条目
-        _map[path] = bmp;
-        lock (_lockObject)
-        {
-            _accessQueue.Enqueue(path);
+            // 添加新条目到链表头部
+            var newEntry = new CacheEntry
+            {
+                Path = path,
+                Bitmap = bmp
+            };
+            var node = _lruList.AddFirst(newEntry);
+            newEntry.Node = node;
+            _map[path] = newEntry;
         }
     }
 
     // ── 删除单条（文件被改名/删除时调用） ────────────────────────
     public void Remove(string path)
     {
-        _map.TryRemove(path, out _);
-        // 注意：队列中的残留会在下次淘汰时清理
+        lock (_lockObject)
+        {
+            if (_map.TryGetValue(path, out var entry))
+            {
+                if (entry.Node != null && entry.Node.List != null)
+                {
+                    _lruList.Remove(entry.Node);
+                }
+                _map.Remove(path);
+            }
+        }
     }
 
     // ── 清空（切换文件夹时调用） ─────────────────────────────────
     public void Clear()
     {
-        _map.Clear();
         lock (_lockObject)
         {
-            while (_accessQueue.TryDequeue(out _)) { }
+            _map.Clear();
+            _lruList.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 获取当前缓存数量
+    /// </summary>
+    public int Count
+    {
+        get
+        {
+            lock (_lockObject)
+            {
+                return _map.Count;
+            }
         }
     }
 }

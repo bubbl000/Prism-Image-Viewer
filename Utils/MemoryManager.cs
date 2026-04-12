@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Windows.Media.Imaging;
 
 namespace ImageBrowser.Utils;
@@ -29,6 +30,26 @@ public static class MemoryManager
     /// GC 最小间隔（避免频繁 GC）
     /// </summary>
     private static readonly TimeSpan MinGcInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Windows API 用于获取物理内存信息
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
     /// <summary>
     /// 释放 BitmapSource 资源
@@ -121,6 +142,45 @@ public static class MemoryManager
         var managedMB = GetMemoryUsageMB();
         
         return $"工作集: {workingSetMB:F1} MB, 托管堆: {managedMB:F1} MB";
+    }
+
+    /// <summary>
+    /// 获取系统物理内存信息（使用 Windows API）
+    /// </summary>
+    public static (ulong TotalPhysical, ulong AvailablePhysical) GetPhysicalMemoryInfo()
+    {
+        try
+        {
+            var memStatus = new MEMORYSTATUSEX();
+            memStatus.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+            
+            if (GlobalMemoryStatusEx(ref memStatus))
+            {
+                return (memStatus.ullTotalPhys, memStatus.ullAvailPhys);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[MemoryManager] 获取物理内存信息失败: {ex.Message}");
+        }
+        
+        // 回退到 GC 方法
+        var gcInfo = GC.GetGCMemoryInfo();
+        return ((ulong)gcInfo.TotalAvailableMemoryBytes, (ulong)gcInfo.TotalAvailableMemoryBytes);
+    }
+
+    /// <summary>
+    /// 获取格式化的内存信息字符串（包含物理内存）
+    /// </summary>
+    public static string GetDetailedMemoryInfo()
+    {
+        var process = Process.GetCurrentProcess();
+        var workingSetMB = process.WorkingSet64 / (1024.0 * 1024.0);
+        var managedMB = GetMemoryUsageMB();
+        var (totalPhys, availPhys) = GetPhysicalMemoryInfo();
+        
+        return $"工作集: {workingSetMB:F1} MB, 托管堆: {managedMB:F1} MB, " +
+               $"物理内存: {totalPhys / (1024.0 * 1024.0):F0} MB (可用: {availPhys / (1024.0 * 1024.0):F0} MB)";
     }
 
     /// <summary>

@@ -148,11 +148,13 @@ public class ThumbnailCache : IDisposable
             var filePath = Path.Combine(_cacheDirectory, cacheKey + ".jpg");
             if (!File.Exists(filePath)) return null;
             
-            await using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            // 使用真正的异步文件读取
+            var bytes = await File.ReadAllBytesAsync(filePath);
+            using var ms = new MemoryStream(bytes);
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.StreamSource = fs;
+            bitmap.StreamSource = ms;
             bitmap.EndInit();
             bitmap.Freeze();
             
@@ -176,8 +178,11 @@ public class ThumbnailCache : IDisposable
             var encoder = new JpegBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(thumbnail));
             
-            await using var fs = new FileStream(filePath, FileMode.Create);
-            encoder.Save(fs);
+            // 使用 MemoryStream + File.WriteAllBytesAsync 实现真正的异步写入
+            using var ms = new MemoryStream();
+            encoder.Save(ms);
+            ms.Position = 0;
+            await File.WriteAllBytesAsync(filePath, ms.ToArray());
             
             var fileInfo = new FileInfo(filePath);
             Interlocked.Add(ref _currentDiskCacheSize, fileInfo.Length);

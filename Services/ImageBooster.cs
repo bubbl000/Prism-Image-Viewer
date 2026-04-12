@@ -1,65 +1,76 @@
 using ImageBrowser.Models;
-using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.ComponentModel;
-using System.Linq;
-using System.Threading;
-using System.Windows.Media.Imaging;
+using System.Diagnostics;
+using System.Threading.Channels;
 
 namespace ImageBrowser.Services;
 
 /// <summary>
 /// 图像加速服务
 /// 后台预加载、优先级队列管理、自动资源释放
+/// 使用 Channel + Task 替代 BackgroundWorker，提供更好的并发控制
 /// </summary>
 public class ImageBooster : IDisposable
 {
-    private readonly BackgroundWorker _worker = new();
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Channel<BoosterTask> _taskChannel;
+    private Task? _workerTask;
     private readonly object _lockObj = new();
-    
+
     // 图片列表
-    private List<ImageItem> _imgList { get; } = [];
-    
+    private List<ImageItem> _imgList = [];
+
     // 待加载队列（优先级排序）
-    private List<int> _queuedList { get; } = [];
-    
+    private readonly List<int> _queuedList = [];
+
     // 待释放队列
-    private List<int> _freeList { get; } = [];
-    
+    private readonly List<int> _freeList = [];
+
     // 当前显示的图片索引
     private int _currentIndex = -1;
-    
+
     // 预加载范围（前后各多少张）
     private int _preloadRange = 3;
-    
+
     // 最大缓存数量
     private int _maxCacheCount = 10;
-    
+
     // 是否正在运行
-    public bool IsRunning => _worker.IsBusy;
-    
+    public bool IsRunning => _workerTask is { IsCompleted: false };
+
     // 当前加载的图片数量
-    public int LoadedCount => _imgList.Count(i => i.IsLoaded);
-    
+    public int LoadedCount
+    {
+        get
+        {
+            lock (_lockObj)
+            {
+                return _imgList.Count(i => i.IsLoaded);
+            }
+        }
+    }
+
     // 队列中的任务数量
-    public int QueueCount 
-    { 
-        get 
-        { 
-            lock (_lockObj) 
-            { 
-                return _queuedList.Count; 
-            } 
-        } 
+    public int QueueCount
+    {
+        get
+        {
+            lock (_lockObj)
+            {
+                return _queuedList.Count;
+            }
+        }
     }
 
     public ImageBooster()
     {
-        _worker.WorkerSupportsCancellation = true;
-        _worker.WorkerReportsProgress = true;
-        _worker.DoWork += Worker_DoWork;
-        _worker.ProgressChanged += Worker_ProgressChanged;
-        _worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
+        // 创建有界 Channel，避免内存无限增长
+        _taskChannel = Channel.CreateUnbounded<BoosterTask>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
     }
 
     /// <summary>
@@ -69,8 +80,7 @@ public class ImageBooster : IDisposable
     {
         lock (_lockObj)
         {
-            _imgList.Clear();
-            _imgList.AddRange(images);
+            _imgList = new List<ImageItem>(images);
             _queuedList.Clear();
             _freeList.Clear();
             _currentIndex = -1;
@@ -82,18 +92,43 @@ public class ImageBooster : IDisposable
     /// </summary>
     public void SetCurrentIndex(int index)
     {
-        if (index < 0 || index >= _imgList.Count) return;
-        
+        List<int> indicesToLoad;
+        List<int> indicesToFree;
+
         lock (_lockObj)
         {
+            if (index < 0 || index >= _imgList.Count) return;
+
             _currentIndex = index;
             UpdateQueues();
+            indicesToLoad = new List<int>(_queuedList);
+            indicesToFree = new List<int>(_freeList);
+            _queuedList.Clear();
+            _freeList.Clear();
         }
-        
-        // 触发后台加载
-        if (!_worker.IsBusy)
+
+        // 在锁外触发后台任务
+        EnsureWorkerRunning();
+
+        // 提交任务到 Channel
+        foreach (var idx in indicesToFree)
         {
-            _worker.RunWorkerAsync();
+            _taskChannel.Writer.TryWrite(new BoosterTask(BoosterAction.Release, idx));
+        }
+        foreach (var idx in indicesToLoad)
+        {
+            _taskChannel.Writer.TryWrite(new BoosterTask(BoosterAction.Load, idx));
+        }
+    }
+
+    /// <summary>
+    /// 确保工作线程正在运行
+    /// </summary>
+    private void EnsureWorkerRunning()
+    {
+        if (_workerTask is null or { IsCompleted: true })
+        {
+            _workerTask = Task.Run(WorkerLoopAsync);
         }
     }
 
@@ -104,15 +139,15 @@ public class ImageBooster : IDisposable
     {
         _queuedList.Clear();
         _freeList.Clear();
-        
+
         if (_currentIndex < 0 || _imgList.Count == 0) return;
-        
+
         // 计算需要预加载的索引
         var preloadIndices = new List<int>();
-        
+
         // 当前图片优先级最高
         preloadIndices.Add(_currentIndex);
-        
+
         // 前后预加载
         for (int i = 1; i <= _preloadRange; i++)
         {
@@ -122,7 +157,7 @@ public class ImageBooster : IDisposable
             {
                 preloadIndices.Add(prevIndex);
             }
-            
+
             // 后面的图片
             int nextIndex = _currentIndex + i;
             if (nextIndex < _imgList.Count)
@@ -130,7 +165,7 @@ public class ImageBooster : IDisposable
                 preloadIndices.Add(nextIndex);
             }
         }
-        
+
         // 添加到加载队列（未加载的）
         foreach (var idx in preloadIndices)
         {
@@ -139,7 +174,7 @@ public class ImageBooster : IDisposable
                 _queuedList.Add(idx);
             }
         }
-        
+
         // 确定需要释放的图片
         var loadedIndices = _imgList
             .Select((item, idx) => new { Item = item, Index = idx })
@@ -147,7 +182,7 @@ public class ImageBooster : IDisposable
             .Select(x => x.Index)
             .Where(idx => !preloadIndices.Contains(idx))
             .ToList();
-        
+
         // 如果超过最大缓存数，释放最远的图片
         if (loadedIndices.Count > _maxCacheCount)
         {
@@ -156,110 +191,129 @@ public class ImageBooster : IDisposable
                 .OrderByDescending(x => x.Distance)
                 .Take(loadedIndices.Count - _maxCacheCount)
                 .Select(x => x.Index);
-            
+
             _freeList.AddRange(sortedByDistance);
         }
     }
 
     /// <summary>
-    /// 后台工作线程
+    /// 后台工作循环
     /// </summary>
-    private void Worker_DoWork(object? sender, DoWorkEventArgs e)
+    private async Task WorkerLoopAsync()
     {
-        while (!_worker.CancellationPending)
+        await foreach (var task in _taskChannel.Reader.ReadAllAsync(_cts.Token))
         {
-            int? indexToLoad = null;
-            int? indexToFree = null;
-            
-            lock (_lockObj)
+            try
             {
-                // 优先释放资源
-                if (_freeList.Count > 0)
+                switch (task.Action)
                 {
-                    indexToFree = _freeList[0];
-                    _freeList.RemoveAt(0);
-                }
-                // 然后加载图片
-                else if (_queuedList.Count > 0)
-                {
-                    indexToLoad = _queuedList[0];
-                    _queuedList.RemoveAt(0);
+                    case BoosterAction.Release:
+                        await ExecuteReleaseAsync(task.Index);
+                        break;
+                    case BoosterAction.Load:
+                        await ExecuteLoadAsync(task.Index);
+                        break;
                 }
             }
-            
-            // 执行释放
-            if (indexToFree.HasValue)
+            catch (Exception ex)
             {
-                try
-                {
-                    FreeImage(indexToFree.Value);
-                    _worker.ReportProgress(0, new BoosterProgress 
-                    { 
-                        Action = BoosterAction.Released, 
-                        Index = indexToFree.Value 
-                    });
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"释放图片失败: {ex.Message}");
-                }
+                Debug.WriteLine($"[ImageBooster] 任务执行失败: {ex.Message}");
             }
-            
-            // 执行加载
-            if (indexToLoad.HasValue)
-            {
-                try
-                {
-                    LoadImage(indexToLoad.Value);
-                    _worker.ReportProgress(0, new BoosterProgress 
-                    { 
-                        Action = BoosterAction.Loaded, 
-                        Index = indexToLoad.Value 
-                    });
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"加载图片失败: {ex.Message}");
-                }
-            }
-            
-            // 如果没有任务，退出循环
-            if (!indexToLoad.HasValue && !indexToFree.HasValue)
-            {
-                break;
-            }
-            
-            // 短暂休眠，避免占用过多 CPU
-            Thread.Sleep(10);
+
+            // 短暂延迟，避免占用过多 CPU
+            await Task.Delay(10, _cts.Token);
         }
     }
 
     /// <summary>
-    /// 加载指定索引的图片（异步版本，避免 .Result 死锁）
+    /// 执行释放操作
+    /// </summary>
+    private async Task ExecuteReleaseAsync(int index)
+    {
+        try
+        {
+            // 在锁内检查状态
+            bool shouldRelease;
+            lock (_lockObj)
+            {
+                shouldRelease = index >= 0 && index < _imgList.Count && _imgList[index].IsLoaded;
+            }
+
+            if (!shouldRelease) return;
+
+            // 释放操作在锁外执行
+            await Task.Run(() => FreeImage(index));
+
+            ProgressChanged?.Invoke(this, new BoosterProgress
+            {
+                Action = BoosterAction.Released,
+                Index = index
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ImageBooster] 释放图片失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 执行加载操作
+    /// </summary>
+    private async Task ExecuteLoadAsync(int index)
+    {
+        try
+        {
+            // 在锁内检查状态
+            bool shouldLoad;
+            lock (_lockObj)
+            {
+                shouldLoad = index >= 0 && index < _imgList.Count && !_imgList[index].IsLoaded;
+            }
+
+            if (!shouldLoad) return;
+
+            // 加载操作在锁外执行
+            await LoadImageAsync(index);
+
+            ProgressChanged?.Invoke(this, new BoosterProgress
+            {
+                Action = BoosterAction.Loaded,
+                Index = index
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ImageBooster] 加载图片失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 加载指定索引的图片（异步版本）
     /// </summary>
     private async Task LoadImageAsync(int index)
     {
-        if (index < 0 || index >= _imgList.Count) return;
-        
-        var item = _imgList[index];
+        ImageItem? item;
+        lock (_lockObj)
+        {
+            if (index < 0 || index >= _imgList.Count) return;
+            item = _imgList[index];
+        }
+
         if (item.IsLoaded) return;
-        
-        // 使用 WicImageLoader 加载缩略图（使用 await 避免死锁）
+
+        // 使用 WicImageLoader 加载缩略图
         var thumbnail = await WicImageLoader.LoadThumbnailAsync(item.FilePath, 200, 200).ConfigureAwait(false);
         if (thumbnail != null)
         {
-            item.Thumbnail = thumbnail;
+            lock (_lockObj)
+            {
+                // 再次检查索引是否仍然有效
+                if (index < _imgList.Count && _imgList[index] == item)
+                {
+                    item.Thumbnail = thumbnail;
+                }
+            }
         }
-    }
-
-    /// <summary>
-    /// 加载指定索引的图片（同步包装，用于兼容旧代码）
-    /// </summary>
-    private void LoadImage(int index)
-    {
-        // 使用 GetAwaiter().GetResult() 比 .Result 更安全
-        // 但仍然建议尽可能使用 LoadImageAsync
-        LoadImageAsync(index).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -267,32 +321,16 @@ public class ImageBooster : IDisposable
     /// </summary>
     private void FreeImage(int index)
     {
-        if (index < 0 || index >= _imgList.Count) return;
-        
-        var item = _imgList[index];
-        if (!item.IsLoaded) return;
-        
-        // 释放缩略图资源
-        item.Thumbnail = null;
-    }
-
-    /// <summary>
-    /// 进度报告
-    /// </summary>
-    private void Worker_ProgressChanged(object? sender, ProgressChangedEventArgs e)
-    {
-        if (e.UserState is BoosterProgress progress)
+        lock (_lockObj)
         {
-            ProgressChanged?.Invoke(this, progress);
-        }
-    }
+            if (index < 0 || index >= _imgList.Count) return;
 
-    /// <summary>
-    /// 工作完成
-    /// </summary>
-    private void Worker_RunWorkerCompleted(object? sender, RunWorkerCompletedEventArgs e)
-    {
-        WorkCompleted?.Invoke(this, EventArgs.Empty);
+            var item = _imgList[index];
+            if (!item.IsLoaded) return;
+
+            // 释放缩略图资源
+            item.Thumbnail = null;
+        }
     }
 
     /// <summary>
@@ -310,10 +348,8 @@ public class ImageBooster : IDisposable
     /// </summary>
     public void Stop()
     {
-        if (_worker.IsBusy)
-        {
-            _worker.CancelAsync();
-        }
+        _cts.Cancel();
+        _taskChannel.Writer.Complete();
     }
 
     /// <summary>
@@ -339,17 +375,25 @@ public class ImageBooster : IDisposable
     {
         Stop();
         ClearCache();
-        _worker.Dispose();
+        _cts.Dispose();
+        _taskChannel.Writer.Complete();
     }
 }
+
+/// <summary>
+/// 加速任务
+/// </summary>
+internal readonly record struct BoosterTask(BoosterAction Action, int Index);
 
 /// <summary>
 /// 加速服务操作类型
 /// </summary>
 public enum BoosterAction
 {
+    Load,
+    Released,
     Loaded,
-    Released
+    Release
 }
 
 /// <summary>

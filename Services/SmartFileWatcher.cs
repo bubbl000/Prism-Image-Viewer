@@ -16,6 +16,7 @@ public class SmartFileWatcher : IDisposable
     private readonly ConcurrentQueue<FileSystemEventArgs> _eventQueue = new();
     private readonly Timer _processTimer;
     private readonly object _lockObject = new();
+    private CancellationTokenSource? _cts;
 
     // 防抖间隔（毫秒）
     private const int DebounceIntervalMs = 500;
@@ -88,8 +89,10 @@ public class SmartFileWatcher : IDisposable
 
     public SmartFileWatcher()
     {
+        // 创建 CancellationTokenSource 用于取消操作
+        _cts = new CancellationTokenSource();
         // 创建定时器，定期批量处理事件
-        _processTimer = new Timer(ProcessEventsCallback, null, DebounceIntervalMs, DebounceIntervalMs);
+        _processTimer = new Timer(ProcessEventsCallback, _cts.Token, DebounceIntervalMs, DebounceIntervalMs);
     }
 
     /// <summary>
@@ -101,6 +104,10 @@ public class SmartFileWatcher : IDisposable
             throw new DirectoryNotFoundException($"目录不存在: {path}");
 
         StopWatching();
+
+        // 创建新的 CancellationTokenSource
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
 
         WatchPath = path;
 
@@ -134,6 +141,9 @@ public class SmartFileWatcher : IDisposable
     /// </summary>
     public void StopWatching()
     {
+        // 取消所有正在进行的操作
+        _cts?.Cancel();
+
         if (_watcher != null)
         {
             _watcher.EnableRaisingEvents = false;
@@ -218,10 +228,18 @@ public class SmartFileWatcher : IDisposable
     /// </summary>
     private void ProcessEventsCallback(object? state)
     {
+        // 检查是否已取消
+        if (state is CancellationToken ct && ct.IsCancellationRequested)
+            return;
+
         if (_eventQueue.IsEmpty) return;
 
         lock (_lockObject)
         {
+            // 再次检查取消状态
+            if (state is CancellationToken ct2 && ct2.IsCancellationRequested)
+                return;
+
             // 收集所有事件
             var createdFiles = new List<string>();
             var deletedFiles = new List<string>();
@@ -248,88 +266,71 @@ public class SmartFileWatcher : IDisposable
                         break;
 
                     case WatcherChangeTypes.Renamed:
-                        if (evt is RenamedEventArgs renamedArgs)
+                        if (evt is RenamedEventArgs renamedEvt &&
+                            !renamedFiles.Any(r => r.oldPath == renamedEvt.OldFullPath && r.newPath == renamedEvt.FullPath))
                         {
-                            renamedFiles.Add((renamedArgs.OldFullPath, renamedArgs.FullPath));
+                            renamedFiles.Add((renamedEvt.OldFullPath, renamedEvt.FullPath));
                         }
                         break;
                 }
             }
 
-            // 触发批量事件
+            // 触发批量事件（在 UI 线程）
             if (createdFiles.Count > 0)
             {
-                RaiseEvent(OnCreated, new FileChangedBatchEventArgs
-                {
-                    FilePaths = createdFiles,
-                    ChangeType = WatcherChangeTypes.Created
-                });
+                InvokeOnUIThread(() => OnCreated?.Invoke(this, new FileChangedBatchEventArgs(createdFiles)));
             }
 
             if (deletedFiles.Count > 0)
             {
-                RaiseEvent(OnDeleted, new FileChangedBatchEventArgs
-                {
-                    FilePaths = deletedFiles,
-                    ChangeType = WatcherChangeTypes.Deleted
-                });
+                InvokeOnUIThread(() => OnDeleted?.Invoke(this, new FileChangedBatchEventArgs(deletedFiles)));
             }
 
             if (changedFiles.Count > 0)
             {
-                RaiseEvent(OnChanged, new FileChangedBatchEventArgs
-                {
-                    FilePaths = changedFiles,
-                    ChangeType = WatcherChangeTypes.Changed
-                });
+                InvokeOnUIThread(() => OnChanged?.Invoke(this, new FileChangedBatchEventArgs(changedFiles)));
             }
 
             if (renamedFiles.Count > 0)
             {
-                RaiseEvent(OnRenamed, new FileRenamedBatchEventArgs
-                {
-                    RenamedFiles = renamedFiles
-                });
+                InvokeOnUIThread(() => OnRenamed?.Invoke(this, new FileRenamedBatchEventArgs(renamedFiles)));
             }
         }
     }
 
     /// <summary>
-    /// 安全地触发事件（自动 Invoke 到 UI 线程）
+    /// 在 UI 线程上执行操作
     /// </summary>
-    private void RaiseEvent<T>(EventHandler<T>? handler, T args) where T : EventArgs
+    private void InvokeOnUIThread(Action action)
     {
-        if (handler == null) return;
-
-        // 优先使用 Dispatcher（WPF）
         if (Dispatcher != null)
         {
             if (Dispatcher.CheckAccess())
-            {
-                handler(this, args);
-            }
+                action();
             else
-            {
-                Dispatcher.Invoke(() => handler(this, args));
-            }
-            return;
+                Dispatcher.Invoke(action);
         }
-
-        // 回退到 ISynchronizeInvoke（WinForms）
-        if (SynchronizingObject != null && SynchronizingObject.InvokeRequired)
+        else if (SynchronizingObject != null)
         {
-            SynchronizingObject.Invoke(() => handler(this, args), null);
+            if (SynchronizingObject.InvokeRequired)
+                SynchronizingObject.Invoke(action, null);
+            else
+                action();
         }
         else
         {
-            handler(this, args);
+            action();
         }
     }
 
+    /// <summary>
+    /// 释放资源
+    /// </summary>
     public void Dispose()
     {
         StopWatching();
         _processTimer?.Dispose();
+        _cts?.Dispose();
     }
 }
 
@@ -338,20 +339,12 @@ public class SmartFileWatcher : IDisposable
 /// </summary>
 public class FileChangedBatchEventArgs : EventArgs
 {
-    /// <summary>
-    /// 变化的文件路径列表
-    /// </summary>
-    public List<string> FilePaths { get; set; } = new();
+    public IReadOnlyList<string> Files { get; }
 
-    /// <summary>
-    /// 变化类型
-    /// </summary>
-    public WatcherChangeTypes ChangeType { get; set; }
-
-    /// <summary>
-    /// 事件时间
-    /// </summary>
-    public DateTime EventTime { get; set; } = DateTime.Now;
+    public FileChangedBatchEventArgs(IReadOnlyList<string> files)
+    {
+        Files = files;
+    }
 }
 
 /// <summary>
@@ -359,13 +352,10 @@ public class FileChangedBatchEventArgs : EventArgs
 /// </summary>
 public class FileRenamedBatchEventArgs : EventArgs
 {
-    /// <summary>
-    /// 重命名的文件列表 (旧路径, 新路径)
-    /// </summary>
-    public List<(string oldPath, string newPath)> RenamedFiles { get; set; } = new();
+    public IReadOnlyList<(string OldPath, string NewPath)> RenamedFiles { get; }
 
-    /// <summary>
-    /// 事件时间
-    /// </summary>
-    public DateTime EventTime { get; set; } = DateTime.Now;
+    public FileRenamedBatchEventArgs(IReadOnlyList<(string OldPath, string NewPath)> renamedFiles)
+    {
+        RenamedFiles = renamedFiles;
+    }
 }

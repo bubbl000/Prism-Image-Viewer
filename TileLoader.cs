@@ -133,10 +133,31 @@ internal static class TileLoader
         return tiles;
     }
 
+    // 文件大小阈值（MB）- 超过此值的文件将拒绝使用 tile 模式
+    private const int MaxFileSizeForTileModeMB = 200;
+    private const long MaxFileSizeForTileModeBytes = MaxFileSizeForTileModeMB * 1024L * 1024L;
+
+    /// <summary>
+    /// 检查文件是否适合使用 tile 模式
+    /// </summary>
+    public static bool IsFileSuitableForTileMode(string filePath)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(filePath);
+            if (!fileInfo.Exists) return false;
+            return fileInfo.Length <= MaxFileSizeForTileModeBytes;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// 加载单个 tile
     /// ⚠️ 警告：当前实现每次都会加载完整图像，然后裁剪出 tile 区域
-    /// 对于超大文件（>100MB），这会导致严重的性能问题
+    /// 对于超大文件（>200MB），会拒绝加载以避免内存问题
     /// TODO: 实现真正的 tile 裁剪解码，只加载需要的图像区域
     /// </summary>
     public static BitmapSource? LoadTile(string filePath, TileInfo tile, CancellationToken ct = default)
@@ -147,7 +168,7 @@ internal static class TileLoader
 
             // 安全检查：如果文件太大，拒绝加载以避免内存问题
             var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Exists && fileInfo.Length > 100 * 1024 * 1024) // 100MB
+            if (fileInfo.Exists && fileInfo.Length > MaxFileSizeForTileModeBytes)
             {
                 System.Diagnostics.Debug.WriteLine($"[TileLoader] 文件过大 ({fileInfo.Length / 1024 / 1024}MB)，跳过 tile 加载: {filePath}");
                 return null;
@@ -155,6 +176,7 @@ internal static class TileLoader
 
             // 使用 PsdLoader 加载图像
             // ⚠️ 注意：这里加载的是完整图像，不是 tile 区域！
+            // 对于超大文件，这会导致严重的性能问题
             var bitmap = PsdLoader.LoadImage(filePath, ct);
             if (bitmap == null) return null;
 
