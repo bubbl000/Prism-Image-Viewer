@@ -1,8 +1,10 @@
+using System.Buffers;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ImageBrowser.Utils;
 
 namespace ImageBrowser;
 
@@ -11,10 +13,10 @@ public partial class MainWindow
     // ─── 专业格式缓存目录 ──────────────────────────────────────
     private static readonly string _professionalCacheDir = 
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "棱镜图片浏览器", "专业格式缓存");
+                    "PrismImageViewer", "ProfessionalCache");
 
-    // ─── 专业格式加载（使用 Magick.NET + 缓存优化）─────────────────
-    private static BitmapSource LoadProfessionalImage(string filePath)
+    // ─── 专业格式加载（使用 Magick.NET + 异步 IO + 缓存优化）─────────────────
+    private static async Task<BitmapSource> LoadProfessionalImageAsync(string filePath)
     {
         try
         {
@@ -31,10 +33,13 @@ public partial class MainWindow
                 return LoadStandardImage(cachePath);
             }
 
-            // 使用超时机制防止无限阻塞（10秒超时）
-            var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            // 使用异步加载大文件（真正的异步 IO，不阻塞线程池）
+            using var fileStream = await AsyncFileLoader.LoadImageStreamAsync(filePath);
             
-            // 在独立任务中执行 Magick.NET 操作
+            // 使用超时机制防止无限阻塞（10秒超时）
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            
+            // 在独立任务中执行 Magick.NET 操作（CPU 密集型）
             var loadTask = Task.Run(() =>
             {
                 using (var image = new ImageMagick.MagickImage())
@@ -46,8 +51,8 @@ public partial class MainWindow
                     // 检查取消令牌
                     timeoutCts.Token.ThrowIfCancellationRequested();
                     
-                    // 读取文件
-                    image.Read(filePath);
+                    // 从流读取文件（支持异步加载的大文件）
+                    image.Read(fileStream);
                     
                     // 关键优化：大图像自动缩小到合理尺寸（4K以内）
                     if (image.Width > 4000 || image.Height > 4000)
@@ -64,8 +69,33 @@ public partial class MainWindow
                         image.Resize(geometry);
                     }
 
-                    // 创建缓存目录
-                    Directory.CreateDirectory(_professionalCacheDir);
+                    // 创建缓存目录（如果不存在）
+                    try
+                    {
+                        if (!Directory.Exists(_professionalCacheDir))
+                        {
+                            Directory.CreateDirectory(_professionalCacheDir);
+                        }
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        // 如果无法创建缓存目录，直接使用内存加载而不缓存
+                        image.Format = ImageMagick.MagickFormat.Jpeg;
+                        image.Quality = 95;
+                        
+                        // 使用 ArrayPool 减少内存分配
+                        using var memStream = new MemoryStream();
+                        image.Write(memStream);
+                        memStream.Position = 0;
+                        
+                        var bitmap = new BitmapImage();
+                        bitmap.BeginInit();
+                        bitmap.StreamSource = memStream;
+                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                        bitmap.EndInit();
+                        bitmap.Freeze();
+                        return bitmap;
+                    }
                     
                     // 关键优化：使用 JPEG 作为中间格式（速度快 3-5 倍）
                     image.Format = ImageMagick.MagickFormat.Jpeg;
@@ -80,9 +110,9 @@ public partial class MainWindow
             }, timeoutCts.Token);
 
             // 等待任务完成，支持超时
-            if (loadTask.Wait(TimeSpan.FromSeconds(10)))
+            if (await Task.WhenAny(loadTask, Task.Delay(TimeSpan.FromSeconds(10), timeoutCts.Token)) == loadTask)
             {
-                return loadTask.Result;
+                return await loadTask;
             }
             else
             {
@@ -98,6 +128,82 @@ public partial class MainWindow
         {
             // Magick.NET 特定错误处理
             throw new NotSupportedException($"Magick.NET 无法读取专业格式文件 ({Path.GetExtension(filePath)}): {magickEx.Message}");
+        }
+        catch (Exception ex)
+        {
+            throw new NotSupportedException($"无法读取专业格式文件 ({Path.GetExtension(filePath)}): {ex.Message}");
+        }
+    }
+
+    // ─── 同步包装方法（保持兼容性）─────────────────────────────
+    private static BitmapSource LoadProfessionalImage(string filePath)
+    {
+        // 大文件（> 50MB）使用真正的异步 IO 避免阻塞线程池
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length > 50 * 1024 * 1024)
+        {
+            return LoadProfessionalImageAsync(filePath).GetAwaiter().GetResult();
+        }
+        
+        // 小文件使用原有同步方式（更快）
+        return LoadProfessionalImageSync(filePath);
+    }
+
+    // ─── 同步版本（用于小文件）─────────────────────────────
+    private static BitmapSource LoadProfessionalImageSync(string filePath)
+    {
+        try
+        {
+            string cacheKey = Path.GetFileNameWithoutExtension(filePath) + "_" + 
+                              new FileInfo(filePath).Length.GetHashCode().ToString("X");
+            string cachePath = Path.Combine(_professionalCacheDir, cacheKey + ".jpg");
+
+            if (File.Exists(cachePath) && 
+                File.GetLastWriteTime(cachePath) > File.GetLastWriteTime(filePath))
+            {
+                return LoadStandardImage(cachePath);
+            }
+
+            using var image = new ImageMagick.MagickImage();
+            image.Settings.SetDefine("psd:maximum-size", "8192x8192");
+            image.Settings.Compression = ImageMagick.CompressionMethod.Zip;
+            image.Read(filePath);
+            
+            if (image.Width > 4000 || image.Height > 4000)
+            {
+                int newWidth = Math.Min(4000, (int)image.Width);
+                int newHeight = (int)((long)image.Height * newWidth / image.Width);
+                var geometry = new ImageMagick.MagickGeometry((uint)newWidth, (uint)newHeight)
+                {
+                    IgnoreAspectRatio = false
+                };
+                image.Resize(geometry);
+            }
+
+            try
+            {
+                if (!Directory.Exists(_professionalCacheDir))
+                {
+                    Directory.CreateDirectory(_professionalCacheDir);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                image.Format = ImageMagick.MagickFormat.Jpeg;
+                image.Quality = 95;
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.StreamSource = new MemoryStream(image.ToByteArray());
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+                bitmap.Freeze();
+                return bitmap;
+            }
+            
+            image.Format = ImageMagick.MagickFormat.Jpeg;
+            image.Quality = 95;
+            image.Write(cachePath);
+            return LoadStandardImage(cachePath);
         }
         catch (Exception ex)
         {
@@ -428,16 +534,41 @@ public partial class MainWindow
         // RAW 文件使用 Magick.NET 解码
         if (isRaw || filePath.EndsWith(".cr3", StringComparison.OrdinalIgnoreCase))
         {
-            return LoadProfessionalImage(filePath);
+            try
+            {
+                return LoadProfessionalImage(filePath);
+            }
+            catch (Exception ex)
+            {
+                // Magick.NET 无法读取时，尝试使用 WIC 内置解码器
+                System.Diagnostics.Debug.WriteLine($"Magick.NET 无法读取 {filePath}: {ex.Message}，尝试 WIC 解码");
+                
+                // 尝试使用 Windows 内置的 WIC 解码器（可能支持某些 Magick.NET 不支持的格式变体）
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.UriSource = new Uri(filePath);
+                    bmp.EndInit();
+                    bmp.Freeze();
+                    return bmp;
+                }
+                catch
+                {
+                    // 如果 WIC 也失败，抛出原始错误
+                    throw;
+                }
+            }
         }
 
-        var bmp = new BitmapImage();
-        bmp.BeginInit();
-        bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.UriSource   = new Uri(filePath);
-        bmp.EndInit();
-        bmp.Freeze();
-        return bmp;
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.UriSource   = new Uri(filePath);
+        bitmap.EndInit();
+        bitmap.Freeze();
+        return bitmap;
     }
 
     // ── 后台预读取相邻图片（+1, +2, -1）──────────────────────────

@@ -85,35 +85,12 @@ public partial class MainWindow
         {
             List<string> files;
             
-            // 尝试获取资源管理器排序
-            if (AppSettings.Current.UseExplorerSort)
-            {
-                var explorerFiles = ExplorerSortService.GetExplorerSortedFiles(path);
-                if (explorerFiles != null && explorerFiles.Count > 0)
-                {
-                    files = explorerFiles
-                        .Where(f => SupportedExts.Contains(
-                            Path.GetExtension(f).ToLowerInvariant()))
-                        .ToList();
-                }
-                else
-                {
-                    // 回退到自然排序
-                    files = Directory.GetFiles(path)
-                        .Where(f => SupportedExts.Contains(
-                            Path.GetExtension(f).ToLowerInvariant()))
-                        .OrderBy(f => f, NaturalStringComparer.Instance)
-                        .ToList();
-                }
-            }
-            else
-            {
-                files = Directory.GetFiles(path)
-                    .Where(f => SupportedExts.Contains(
-                        Path.GetExtension(f).ToLowerInvariant()))
-                    .OrderBy(f => f, NaturalStringComparer.Instance)
-                    .ToList();
-            }
+            // 获取文件列表并使用自然排序（与资源管理器默认排序一致）
+            files = Directory.GetFiles(path)
+                .Where(f => SupportedExts.Contains(
+                    Path.GetExtension(f).ToLowerInvariant()))
+                .OrderBy(f => Path.GetFileName(f), NaturalStringComparer.Instance)
+                .ToList();
 
             if (files.Count == 0)
             {
@@ -140,37 +117,12 @@ public partial class MainWindow
             string? dir = Path.GetDirectoryName(path);
             if (dir != null)
             {
-                List<string> files;
-                
-                // 尝试获取资源管理器排序
-                if (AppSettings.Current.UseExplorerSort)
-                {
-                    var explorerFiles = ExplorerSortService.GetExplorerSortedFiles(dir);
-                    if (explorerFiles != null && explorerFiles.Count > 0)
-                    {
-                        files = explorerFiles
-                            .Where(f => SupportedExts.Contains(
-                                Path.GetExtension(f).ToLowerInvariant()))
-                            .ToList();
-                    }
-                    else
-                    {
-                        // 回退到自然排序
-                        files = Directory.GetFiles(dir)
-                            .Where(f => SupportedExts.Contains(
-                                Path.GetExtension(f).ToLowerInvariant()))
-                            .OrderBy(f => f, NaturalStringComparer.Instance)
-                            .ToList();
-                    }
-                }
-                else
-                {
-                    files = Directory.GetFiles(dir)
-                        .Where(f => SupportedExts.Contains(
-                            Path.GetExtension(f).ToLowerInvariant()))
-                        .OrderBy(f => f, NaturalStringComparer.Instance)
-                        .ToList();
-                }
+                // 获取文件列表并使用自然排序（与资源管理器默认排序一致）
+                var files = Directory.GetFiles(dir)
+                    .Where(f => SupportedExts.Contains(
+                        Path.GetExtension(f).ToLowerInvariant()))
+                    .OrderBy(f => Path.GetFileName(f), NaturalStringComparer.Instance)
+                    .ToList();
 
                 _imageFiles = files;
                 ReloadThumbnails();

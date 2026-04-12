@@ -81,8 +81,8 @@
         <Style x:Key="NavBtnStyle" TargetType="Button">
             <Setter Property="Width" Value="38"/>
             <Setter Property="Height" Value="64"/>
-            <Setter Property="Background" Value="#66000000"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#44000000"/>
+            <Setter Property="Foreground" Value="#CCFFFFFF"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontSize" Value="20"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -94,7 +94,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#99000000"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF90C208"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF7AAD06"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
